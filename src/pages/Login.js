@@ -37,11 +37,16 @@ export default function Login() {
           setLoading(false);
           return;
         }
-        login(formData.email, formData.password, formData.role);
+
+        const result = await login(formData.email, formData.password);
         
-        // Redirigir según rol
-        const storedUser = JSON.parse(localStorage.getItem('finmarket_user'));
-        navigate(storedUser.role === 'teacher' ? '/teacher' : '/dashboard');
+        if (result.success) {
+          // Redirigir según rol
+          navigate(result.user.role === 'teacher' ? '/teacher' : '/dashboard');
+        } else {
+          setError(result.error || 'Error al iniciar sesión. Verifica tus credenciales.');
+          setLoading(false);
+        }
         
       } else {
         // Registro
@@ -75,10 +80,20 @@ export default function Login() {
           }
         }
         
-        register(formData.name, formData.email, formData.password, formData.role);
+        const result = await register(
+          formData.name, 
+          formData.email, 
+          formData.password, 
+          formData.role
+        );
         
-        // Redirigir según rol
-        navigate(formData.role === 'teacher' ? '/teacher' : '/dashboard');
+        if (result.success) {
+          // Redirigir según rol
+          navigate(result.user.role === 'teacher' ? '/teacher' : '/dashboard');
+        } else {
+          setError(result.error || 'Error al crear la cuenta. El email puede estar en uso.');
+          setLoading(false);
+        }
       }
     } catch (err) {
       setError('Error al procesar la solicitud');
