@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { getAssetPrice } from '../utils/marketData';
+import { getAllAssets, getAssetPrice } from '../utils/assetService';
 import { useAuth } from '../context/AuthContext';
 import './Dashboard.css';
 import { 
@@ -91,73 +91,20 @@ const [periodInfo] = useState(getMarketPeriodInfo());
   }, [currentUser, userData]);
 
   // Declarar allAssets
-  const allAssets = [
-  { symbol: 'SAN', name: 'Banco Santander', price: getAssetPrice('SAN'), change: -1.2, category: 'IBEX 35' },
-  { symbol: 'BBVA', name: 'Banco Bilbao Vizcaya', price: getAssetPrice('BBVA'), change: 2.3, category: 'IBEX 35' },
-  { symbol: 'IBE', name: 'Iberdrola', price: getAssetPrice('IBE'), change: 1.5, category: 'IBEX 35' },
-  { symbol: 'TEF', name: 'Telefónica', price: getAssetPrice('TEF'), change: 0.8, category: 'IBEX 35' },
-  { symbol: 'ITX', name: 'Inditex', price: getAssetPrice('ITX'), change: 3.2, category: 'IBEX 35' },
-  { symbol: 'REP', name: 'Repsol', price: getAssetPrice('REP'), change: -0.5, category: 'IBEX 35' },
-  { symbol: 'CABK', name: 'CaixaBank', price: getAssetPrice('CABK'), change: 1.8, category: 'IBEX 35' },
-  { symbol: 'ACS', name: 'ACS', price: getAssetPrice('ACS'), change: 0.9, category: 'IBEX 35' },
-  { symbol: 'FER', name: 'Ferrovial', price: getAssetPrice('FER'), change: -1.1, category: 'IBEX 35' },
-  { symbol: 'ENG', name: 'Enagás', price: getAssetPrice('ENG'), change: 0.4, category: 'IBEX 35' },
-  { symbol: 'AENA', name: 'Aena', price: getAssetPrice('AENA'), change: 2.1, category: 'IBEX 35' },
-  { symbol: 'IAG', name: 'IAG', price: getAssetPrice('IAG'), change: -2.3, category: 'IBEX 35' },
-  { symbol: 'NTGY', name: 'Naturgy', price: getAssetPrice('NTGY'), change: 0.7, category: 'IBEX 35' },
-  { symbol: 'RED', name: 'Red Eléctrica', price: getAssetPrice('RED'), change: -0.3, category: 'IBEX 35' },
-  { symbol: 'ELE', name: 'Endesa', price: getAssetPrice('ELE'), change: 1.2, category: 'IBEX 35' },
-  { symbol: 'GRF', name: 'Grifols', price: getAssetPrice('GRF'), change: -3.4, category: 'IBEX 35' },
-  { symbol: 'MAP', name: 'Mapfre', price: getAssetPrice('MAP'), change: 0.6, category: 'IBEX 35' },
-  { symbol: 'COL', name: 'Inmobiliaria Colonial', price: getAssetPrice('COL'), change: -1.8, category: 'IBEX 35' },
-  { symbol: 'MRL', name: 'Merlin Properties', price: getAssetPrice('MRL'), change: 0.9, category: 'IBEX 35' },
-  { symbol: 'ACX', name: 'Acerinox', price: getAssetPrice('ACX'), change: 2.4, category: 'IBEX 35' },
-  { symbol: 'ANA', name: 'Acciona', price: getAssetPrice('ANA'), change: 1.6, category: 'IBEX 35' },
-  { symbol: 'SAB', name: 'Banco Sabadell', price: getAssetPrice('SAB'), change: -0.9, category: 'IBEX 35' },
-  { symbol: 'CLNX', name: 'Cellnex', price: getAssetPrice('CLNX'), change: 2.8, category: 'IBEX 35' },
-  { symbol: 'FDR', name: 'Fluidra', price: getAssetPrice('FDR'), change: -1.4, category: 'IBEX 35' },
-  { symbol: 'IDR', name: 'Indra', price: getAssetPrice('IDR'), change: 0.5, category: 'IBEX 35' },
-  { symbol: 'LOG', name: 'Logista', price: getAssetPrice('LOG'), change: 1.1, category: 'IBEX 35' },
-  { symbol: 'MEL', name: 'Meliá Hotels', price: getAssetPrice('MEL'), change: -2.1, category: 'IBEX 35' },
-  { symbol: 'PHM', name: 'PharmaMar', price: getAssetPrice('PHM'), change: 3.9, category: 'IBEX 35' },
-  { symbol: 'ROVI', name: 'Laboratorios Rovi', price: getAssetPrice('ROVI'), change: 1.7, category: 'IBEX 35' },
-  { symbol: 'SLR', name: 'Solaria', price: getAssetPrice('SLR'), change: 4.2, category: 'IBEX 35' },
-  { symbol: 'UNI', name: 'Unicaja', price: getAssetPrice('UNI'), change: -0.7, category: 'IBEX 35' },
-  { symbol: 'VIS', name: 'Viscofan', price: getAssetPrice('VIS'), change: 0.8, category: 'IBEX 35' },
-  { symbol: 'SGRE', name: 'Siemens Gamesa', price: getAssetPrice('SGRE'), change: -1.9, category: 'IBEX 35' },
-  { symbol: 'AMA', name: 'Amadeus', price: getAssetPrice('AMA'), change: 2.3, category: 'IBEX 35' },
-  { symbol: 'ALM', name: 'Almirall', price: getAssetPrice('ALM'), change: -0.4, category: 'IBEX 35' },
-  { symbol: 'BTC', name: 'Bitcoin', price: getAssetPrice('BTC'), change: 5.2, category: 'Crypto' },
-  { symbol: 'ETH', name: 'Ethereum', price: getAssetPrice('ETH'), change: 3.8, category: 'Crypto' },
-  { symbol: 'BNB', name: 'Binance Coin', price: getAssetPrice('BNB'), change: 2.1, category: 'Crypto' },
-  { symbol: 'XRP', name: 'Ripple', price: getAssetPrice('XRP'), change: -1.4, category: 'Crypto' },
-  { symbol: 'ADA', name: 'Cardano', price: getAssetPrice('ADA'), change: 4.5, category: 'Crypto' },
-  { symbol: 'SOL', name: 'Solana', price: getAssetPrice('SOL'), change: 6.7, category: 'Crypto' },
-  { symbol: 'DOGE', name: 'Dogecoin', price: getAssetPrice('DOGE'), change: -2.3, category: 'Crypto' },
-  { symbol: 'DOT', name: 'Polkadot', price: getAssetPrice('DOT'), change: 1.8, category: 'Crypto' },
-  { symbol: 'MATIC', name: 'Polygon', price: getAssetPrice('MATIC'), change: 3.2, category: 'Crypto' },
-  { symbol: 'LTC', name: 'Litecoin', price: getAssetPrice('LTC'), change: -0.9, category: 'Crypto' },
-  { symbol: 'GOLD', name: 'Oro', price: getAssetPrice('GOLD'), change: 0.8, category: 'Materias Primas' },
-  { symbol: 'SILVER', name: 'Plata', price: getAssetPrice('SILVER'), change: 1.2, category: 'Materias Primas' },
-  { symbol: 'WTI', name: 'Petróleo WTI', price: getAssetPrice('WTI'), change: -2.1, category: 'Materias Primas' },
-  { symbol: 'BRENT', name: 'Petróleo Brent', price: getAssetPrice('BRENT'), change: -1.8, category: 'Materias Primas' },
-  { symbol: 'NATGAS', name: 'Gas Natural', price: getAssetPrice('NATGAS'), change: 3.4, category: 'Materias Primas' },
-  { symbol: 'COPPER', name: 'Cobre', price: getAssetPrice('COPPER'), change: 0.6, category: 'Materias Primas' },
-  { symbol: 'PLAT', name: 'Platino', price: getAssetPrice('PLAT'), change: -0.4, category: 'Materias Primas' },
-  { symbol: 'WHEAT', name: 'Trigo', price: getAssetPrice('WHEAT'), change: 2.3, category: 'Materias Primas' },
-  { symbol: 'CORN', name: 'Maíz', price: getAssetPrice('CORN'), change: -1.1, category: 'Materias Primas' },
-  { symbol: 'COFFEE', name: 'Café', price: getAssetPrice('COFFEE'), change: 1.9, category: 'Materias Primas' },
-  { symbol: 'SPY', name: 'SPDR S&P 500 ETF', price: getAssetPrice('SPY'), change: 1.2, category: 'ETF' },
-  { symbol: 'QQQ', name: 'Invesco QQQ Trust', price: getAssetPrice('QQQ'), change: 2.3, category: 'ETF' },
-  { symbol: 'VTI', name: 'Vanguard Total Stock Market', price: getAssetPrice('VTI'), change: 1.5, category: 'ETF' },
-  { symbol: 'IWM', name: 'iShares Russell 2000', price: getAssetPrice('IWM'), change: -0.8, category: 'ETF' },
-  { symbol: 'EEM', name: 'iShares MSCI Emerging Markets', price: getAssetPrice('EEM'), change: 0.9, category: 'ETF' },
-  { symbol: 'GLD', name: 'SPDR Gold Shares', price: getAssetPrice('GLD'), change: 0.7, category: 'ETF' },
-  { symbol: 'TLT', name: 'iShares 20+ Year Treasury Bond', price: getAssetPrice('TLT'), change: -1.2, category: 'ETF' },
-  { symbol: 'VEA', name: 'Vanguard FTSE Developed Markets', price: getAssetPrice('VEA'), change: 1.1, category: 'ETF' },
-  { symbol: 'AGG', name: 'iShares Core US Aggregate Bond', price: getAssetPrice('AGG'), change: -0.3, category: 'ETF' },
-  { symbol: 'VWO', name: 'Vanguard FTSE Emerging Markets', price: getAssetPrice('VWO'), change: 0.6, category: 'ETF' }
-];
+  const [allAssets, setAllAssets] = useState([]);
+const [loadingAssets, setLoadingAssets] = useState(true);
+
+// Cargar activos desde Supabase al montar el componente
+useEffect(() => {
+  const loadAssets = async () => {
+    setLoadingAssets(true);
+    const assets = await getAllAssets();
+    setAllAssets(assets);
+    setLoadingAssets(false);
+  };
+  
+  loadAssets();
+}, []);
 
  // Verificar órdenes pendientes cuando cambien los precios
   useEffect(() => {
