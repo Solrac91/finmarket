@@ -680,6 +680,13 @@ return (
             </div>
           )}
 
+{activeTab === 'events' && (
+            <div className="events-section">
+              <div className="section-header">
+                <h1 className="section-title">Eventos de Mercado</h1>
+                <p className="section-subtitle">Simula crisis económicas y eventos masivos para crear escenarios de aprendizaje realistas</p>
+              </div>
+
 {/* Botón Actualizar Precios Reales */}
 <div className="update-real-prices-section" style={{
   marginBottom: '2rem',
@@ -747,13 +754,6 @@ return (
     </button>
   )}
 </div>
-
-{activeTab === 'events' && (
-            <div className="events-section">
-              <div className="section-header">
-                <h1 className="section-title">Eventos de Mercado</h1>
-                <p className="section-subtitle">Simula crisis económicas y eventos masivos para crear escenarios de aprendizaje realistas</p>
-              </div>
 
               <div className="events-grid">
                 <div className="event-card crisis">
