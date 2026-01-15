@@ -125,7 +125,7 @@ const handleUpdateRealPrices = async () => {
             `Total: ${result.total}`);
       
       // Recargar datos
-      loadAssets();
+      setAllAssets(getAllAssets());
       setPriceHistory(getPriceHistory());
     } else {
       alert(`❌ Error en la actualización: ${result.error}`);
