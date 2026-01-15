@@ -1,12 +1,9 @@
 // src/utils/priceAPI.js
 
-const ALPHA_VANTAGE_KEY = process.env.REACT_APP_ALPHA_VANTAGE_KEY;
-
 // ==========================================
-// 1. OBTENER PRECIO DE CRIPTOMONEDAS (CoinGecko)
+// OBTENER PRECIO DE CRIPTOMONEDAS (CoinGecko)
 // ==========================================
 export const getCryptoPrice = async (symbol) => {
-  // Mapeo de símbolos a IDs de CoinGecko
   const cryptoMap = {
     'BTC': 'bitcoin',
     'ETH': 'ethereum',
@@ -43,32 +40,24 @@ export const getCryptoPrice = async (symbol) => {
 };
 
 // ==========================================
-// 2. OBTENER PRECIO DE ACCIONES (Alpha Vantage)
+// OBTENER PRECIO DE ACCIONES (Twelve Data)
 // ==========================================
 export const getStockPrice = async (symbol) => {
+  const TWELVE_DATA_KEY = process.env.REACT_APP_TWELVE_DATA_KEY;
+  
+  if (!TWELVE_DATA_KEY) {
+    console.error('Twelve Data API key not configured');
+    return null;
+  }
+
   try {
-    // Para acciones del IBEX 35, Alpha Vantage usa el sufijo .MAD (Madrid)
-    const tickerSymbol = symbol.includes('.') ? symbol : `${symbol}.MAD`;
-    
     const response = await fetch(
-      `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${tickerSymbol}&apikey=${ALPHA_VANTAGE_KEY}`
+      `https://api.twelvedata.com/price?symbol=${symbol}&apikey=${TWELVE_DATA_KEY}`
     );
     const data = await response.json();
     
-    if (data['Global Quote'] && data['Global Quote']['05. price']) {
-      return parseFloat(data['Global Quote']['05. price']);
-    }
-    
-    // Si falla con .MAD, intentar sin sufijo
-    if (tickerSymbol.includes('.MAD')) {
-      const response2 = await fetch(
-        `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${symbol}&apikey=${ALPHA_VANTAGE_KEY}`
-      );
-      const data2 = await response2.json();
-      
-      if (data2['Global Quote'] && data2['Global Quote']['05. price']) {
-        return parseFloat(data2['Global Quote']['05. price']);
-      }
+    if (data.price) {
+      return parseFloat(data.price);
     }
     
     return null;
@@ -79,43 +68,7 @@ export const getStockPrice = async (symbol) => {
 };
 
 // ==========================================
-// 3. OBTENER PRECIO DE MATERIAS PRIMAS (Alpha Vantage)
-// ==========================================
-export const getCommodityPrice = async (symbol) => {
-  // Alpha Vantage usa códigos específicos para commodities
-  const commodityMap = {
-    'GOLD': 'XAU/USD',
-    'SILVER': 'XAG/USD',
-    'OIL': 'WTI',
-    'BRENT': 'BRENT',
-    'GAS': 'NATURAL_GAS',
-    'COPPER': 'COPPER',
-    'WHEAT': 'WHEAT',
-    'CORN': 'CORN',
-    'COFFEE': 'COFFEE',
-    'SUGAR': 'SUGAR'
-  };
-
-  const commodityCode = commodityMap[symbol] || symbol;
-
-  try {
-    const response = await fetch(
-      `https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=${commodityCode}&apikey=${ALPHA_VANTAGE_KEY}`
-    );
-    const data = await response.json();
-    
-    if (data['Global Quote'] && data['Global Quote']['05. price']) {
-      return parseFloat(data['Global Quote']['05. price']);
-    }
-    return null;
-  } catch (error) {
-    console.error(`Error fetching commodity price for ${symbol}:`, error);
-    return null;
-  }
-};
-
-// ==========================================
-// 4. OBTENER PRECIO SEGÚN CATEGORÍA
+// OBTENER PRECIO SEGÚN CATEGORÍA
 // ==========================================
 export const getRealTimePrice = async (symbol, category) => {
   try {
@@ -123,11 +76,7 @@ export const getRealTimePrice = async (symbol, category) => {
 
     if (category === 'Crypto') {
       price = await getCryptoPrice(symbol);
-    } else if (category === 'IBEX 35') {
-      price = await getStockPrice(symbol);
-    } else if (category === 'Materias Primas') {
-      price = await getCommodityPrice(symbol);
-    } else if (category === 'ETF') {
+    } else if (category === 'IBEX 35' || category === 'ETF' || category === 'Materias Primas') {
       price = await getStockPrice(symbol);
     }
 
@@ -139,49 +88,100 @@ export const getRealTimePrice = async (symbol, category) => {
 };
 
 // ==========================================
-// 5. ACTUALIZAR MÚLTIPLES ACTIVOS A LA VEZ
+// ACTUALIZAR TODOS LOS PRECIOS (función principal)
 // ==========================================
-export const updateAllPrices = async (assets) => {
-  const updatedAssets = [];
+export const updateAllRealPrices = async (onProgress) => {
+  const { supabase } = await import('../supabaseClient');
+  
+  try {
+    // 1. Obtener todos los activos en modo AUTO
+    const { data: assets, error } = await supabase
+      .from('assets')
+      .select('*')
+      .eq('price_mode', 'auto');
 
-  for (const asset of assets) {
-    // Solo actualizar si está en modo "auto"
-    if (asset.price_mode === 'manual') {
-      updatedAssets.push(asset);
-      continue;
+    if (error) {
+      throw new Error(`Error fetching assets: ${error.message}`);
     }
 
-    const newPrice = await getRealTimePrice(asset.symbol, asset.category);
-    
-    if (newPrice !== null) {
-      updatedAssets.push({
-        ...asset,
-        current_price: newPrice,
-        last_api_update: new Date().toISOString()
-      });
-    } else {
-      // Si falla la API, mantener el precio anterior
-      updatedAssets.push(asset);
+    console.log(`📊 Found ${assets.length} assets in AUTO mode`);
+
+    let updatedCount = 0;
+    let errorCount = 0;
+    const results = [];
+
+    // 2. Actualizar precios de cada activo
+    for (let i = 0; i < assets.length; i++) {
+      const asset = assets[i];
+      
+      try {
+        if (onProgress) {
+          onProgress({
+            current: i + 1,
+            total: assets.length,
+            symbol: asset.symbol,
+            status: 'updating'
+          });
+        }
+
+        console.log(`Updating ${asset.symbol} (${asset.category})...`);
+        
+        const newPrice = await getRealTimePrice(asset.symbol, asset.category);
+        
+        if (newPrice !== null && newPrice > 0) {
+          // Actualizar precio en Supabase
+          const { error: updateError } = await supabase
+            .from('assets')
+            .update({
+              current_price: newPrice,
+              last_api_update: new Date().toISOString()
+            })
+            .eq('id', asset.id);
+
+          if (updateError) {
+            console.error(`Error updating ${asset.symbol}:`, updateError);
+            errorCount++;
+            results.push({ symbol: asset.symbol, status: 'error', error: updateError.message });
+          } else {
+            console.log(`✅ Updated ${asset.symbol}: €${newPrice}`);
+            updatedCount++;
+            results.push({ symbol: asset.symbol, status: 'success', price: newPrice });
+          }
+        } else {
+          console.log(`⚠️ No price available for ${asset.symbol}`);
+          errorCount++;
+          results.push({ symbol: asset.symbol, status: 'no_price' });
+        }
+
+        // Pequeña pausa para no saturar las APIs (solo para acciones, crypto es más tolerante)
+        if (asset.category !== 'Crypto') {
+          await new Promise(resolve => setTimeout(resolve, 1000)); // 1 segundo entre llamadas
+        } else {
+          await new Promise(resolve => setTimeout(resolve, 200)); // 200ms para crypto
+        }
+
+      } catch (error) {
+        console.error(`Error processing ${asset.symbol}:`, error);
+        errorCount++;
+        results.push({ symbol: asset.symbol, status: 'error', error: error.message });
+      }
     }
 
-    // Pequeña pausa para no saturar las APIs
-    await new Promise(resolve => setTimeout(resolve, 200));
+    console.log(`✅ Update complete: ${updatedCount} updated, ${errorCount} errors`);
+
+    return {
+      success: true,
+      updated: updatedCount,
+      errors: errorCount,
+      total: assets.length,
+      results: results
+    };
+
+  } catch (error) {
+    console.error('Fatal error in update process:', error);
+    return {
+      success: false,
+      error: error.message
+    };
   }
-
-  return updatedAssets;
-};
-
-// ==========================================
-// 6. VERIFICAR SI EL MERCADO ESTÁ ABIERTO
-// ==========================================
-export const isMarketOpen = () => {
-  const now = new Date();
-  const hour = now.getHours();
-  const day = now.getDay(); // 0 = Domingo, 6 = Sábado
-  
-  // Mercado español: Lunes-Viernes, 9:00-17:30
-  const isWeekday = day >= 1 && day <= 5;
-  const isDuringHours = hour >= 9 && hour < 18;
-  
-  return isWeekday && isDuringHours;
 };

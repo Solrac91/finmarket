@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { updateAssetPrice, publishNews as publishNewsUtil, getNews, deleteNews, getRelativeTime, getAssetPrice, getPriceHistory, clearPriceHistory, triggerMarketEvent } from '../utils/marketData';
+import { updateAllRealPrices } from '../utils/priceAPI';
 import './TeacherPanel.css';
 import { 
   getMarketDay, 
@@ -53,6 +54,8 @@ const [settings, setSettings] = useState(() => {
 });
 const [marketDay, setMarketDay] = useState(getMarketDay());
 const [periodInfo, setPeriodInfo] = useState(getMarketPeriodInfo());
+const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
+const [updateProgress, setUpdateProgress] = useState({ current: 0, total: 0, symbol: '' });
 
   useEffect(() => {
     if (currentUser?.role !== 'teacher') {
@@ -100,6 +103,40 @@ const updateSettings = (newSettings) => {
   setSettings(newSettings);
   localStorage.setItem('finmarket_settings', JSON.stringify(newSettings));
   alert('✅ Configuración actualizada correctamente');
+};
+
+const handleUpdateRealPrices = async () => {
+  if (!window.confirm('¿Actualizar todos los precios en modo AUTO con valores reales del mercado?')) {
+    return;
+  }
+
+  setIsUpdatingPrices(true);
+  setUpdateProgress({ current: 0, total: 0, symbol: 'Iniciando...' });
+
+  try {
+    const result = await updateAllRealPrices((progress) => {
+      setUpdateProgress(progress);
+    });
+
+    if (result.success) {
+      alert(`✅ Actualización completada!\n\n` +
+            `Actualizados: ${result.updated}\n` +
+            `Errores: ${result.errors}\n` +
+            `Total: ${result.total}`);
+      
+      // Recargar datos
+      loadAssets();
+      setPriceHistory(getPriceHistory());
+    } else {
+      alert(`❌ Error en la actualización: ${result.error}`);
+    }
+  } catch (error) {
+    console.error('Error updating prices:', error);
+    alert(`❌ Error: ${error.message}`);
+  } finally {
+    setIsUpdatingPrices(false);
+    setUpdateProgress({ current: 0, total: 0, symbol: '' });
+  }
 };
 
   const handleLogout = () => {
@@ -642,6 +679,75 @@ return (
               </div>
             </div>
           )}
+
+{/* Botón Actualizar Precios Reales */}
+<div className="update-real-prices-section" style={{
+  marginBottom: '2rem',
+  padding: '1.5rem',
+  background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+  borderRadius: '12px',
+  color: 'white'
+}}>
+  <h3 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+    <Activity size={24} />
+    Actualizar Precios del Mercado Real
+  </h3>
+  <p style={{ marginBottom: '1rem', opacity: 0.9 }}>
+    Obtiene los precios actuales de las APIs para todos los activos en modo AUTO
+  </p>
+  
+  {isUpdatingPrices ? (
+    <div style={{ 
+      background: 'rgba(255,255,255,0.2)', 
+      padding: '1rem', 
+      borderRadius: '8px',
+      textAlign: 'center'
+    }}>
+      <div style={{ marginBottom: '0.5rem', fontSize: '1.1rem', fontWeight: 'bold' }}>
+        Actualizando precios... {updateProgress.current}/{updateProgress.total}
+      </div>
+      <div style={{ opacity: 0.9 }}>
+        {updateProgress.symbol}
+      </div>
+      <div style={{
+        width: '100%',
+        height: '8px',
+        background: 'rgba(255,255,255,0.3)',
+        borderRadius: '4px',
+        marginTop: '1rem',
+        overflow: 'hidden'
+      }}>
+        <div style={{
+          width: `${(updateProgress.current / updateProgress.total) * 100}%`,
+          height: '100%',
+          background: 'white',
+          transition: 'width 0.3s ease'
+        }} />
+      </div>
+    </div>
+  ) : (
+    <button
+      onClick={handleUpdateRealPrices}
+      style={{
+        width: '100%',
+        padding: '1rem',
+        background: 'white',
+        color: '#667eea',
+        border: 'none',
+        borderRadius: '8px',
+        fontSize: '1.1rem',
+        fontWeight: 'bold',
+        cursor: 'pointer',
+        transition: 'transform 0.2s',
+      }}
+      onMouseEnter={(e) => e.target.style.transform = 'scale(1.02)'}
+      onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
+    >
+      🔄 Actualizar Precios Reales Ahora
+    </button>
+  )}
+</div>
+
 {activeTab === 'events' && (
             <div className="events-section">
               <div className="section-header">
