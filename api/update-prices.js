@@ -1,13 +1,15 @@
 // api/update-prices.js
-import { createClient } from '@supabase/supabase-js';
+const { createClient } = require('@supabase/supabase-js');
 
+// Variables de entorno (Vercel las lee directamente)
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
 const supabaseKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
-const supabase = createClient(supabaseUrl, supabaseKey);
-
 const TWELVE_DATA_KEY = process.env.REACT_APP_TWELVE_DATA_KEY;
 const ALPHA_VANTAGE_KEY = process.env.REACT_APP_ALPHA_VANTAGE_KEY;
 const FINNHUB_KEY = process.env.REACT_APP_FINNHUB_KEY;
+
+// Crear cliente de Supabase
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 // ==========================================
 // OBTENER PRECIO DE CRIPTOMONEDAS (CoinGecko)
@@ -53,11 +55,8 @@ async function getCryptoPrice(symbol) {
 // ==========================================
 async function getStockPriceTwelveData(symbol) {
   try {
-    // Para IBEX 35, algunos símbolos necesitan el sufijo .MAD
-    const tickerSymbol = symbol;
-    
     const response = await fetch(
-      `https://api.twelvedata.com/price?symbol=${tickerSymbol}&apikey=${TWELVE_DATA_KEY}`
+      `https://api.twelvedata.com/price?symbol=${symbol}&apikey=${TWELVE_DATA_KEY}`
     );
     const data = await response.json();
     
@@ -100,9 +99,9 @@ async function getRealTimePrice(symbol, category) {
   try {
     let price = null;
 
-    if (category === 'crypto') {
+    if (category === 'crypto' || category === 'Crypto') {
       price = await getCryptoPrice(symbol);
-    } else if (category === 'ibex35' || category === 'etf') {
+    } else if (category === 'ibex35' || category === 'IBEX 35' || category === 'etf' || category === 'ETF') {
       // Intentar primero con Twelve Data
       price = await getStockPriceTwelveData(symbol);
       
@@ -110,7 +109,7 @@ async function getRealTimePrice(symbol, category) {
       if (price === null) {
         price = await getStockPriceAlphaVantage(symbol);
       }
-    } else if (category === 'commodity') {
+    } else if (category === 'commodity' || category === 'Materias Primas') {
       // Para materias primas, usar Twelve Data
       price = await getStockPriceTwelveData(symbol);
     }
@@ -123,14 +122,12 @@ async function getRealTimePrice(symbol, category) {
 }
 
 // ==========================================
-// FUNCIÓN PRINCIPAL DE ACTUALIZACIÓN
+// FUNCIÓN PRINCIPAL - HANDLER DE VERCEL
 // ==========================================
-export default async function handler(req, res) {
-  // Verificar que es una petición autorizada (cron job o manual)
-  const authHeader = req.headers.authorization;
-  
-  // Para Vercel Cron, no se requiere auth
-  // Para llamadas manuales, puedes añadir seguridad después
+module.exports = async function handler(req, res) {
+  // Configurar CORS
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST');
   
   console.log('🚀 Starting price update...');
   
@@ -143,13 +140,14 @@ export default async function handler(req, res) {
 
     if (error) {
       console.error('Error fetching assets:', error);
-      return res.status(500).json({ error: 'Error fetching assets' });
+      return res.status(500).json({ error: 'Error fetching assets', details: error.message });
     }
 
     console.log(`📊 Found ${assets.length} assets in AUTO mode`);
 
     let updatedCount = 0;
     let errorCount = 0;
+    const results = [];
 
     // 2. Actualizar precios de cada activo
     for (const asset of assets) {
@@ -171,13 +169,16 @@ export default async function handler(req, res) {
           if (updateError) {
             console.error(`Error updating ${asset.symbol}:`, updateError);
             errorCount++;
+            results.push({ symbol: asset.symbol, status: 'error', error: updateError.message });
           } else {
             console.log(`✅ Updated ${asset.symbol}: €${newPrice}`);
             updatedCount++;
+            results.push({ symbol: asset.symbol, status: 'success', price: newPrice });
           }
         } else {
           console.log(`⚠️ No price available for ${asset.symbol}`);
           errorCount++;
+          results.push({ symbol: asset.symbol, status: 'no_price' });
         }
 
         // Pequeña pausa para no saturar las APIs
@@ -186,6 +187,7 @@ export default async function handler(req, res) {
       } catch (error) {
         console.error(`Error processing ${asset.symbol}:`, error);
         errorCount++;
+        results.push({ symbol: asset.symbol, status: 'error', error: error.message });
       }
     }
 
@@ -196,14 +198,16 @@ export default async function handler(req, res) {
       message: 'Prices updated successfully',
       updated: updatedCount,
       errors: errorCount,
-      total: assets.length
+      total: assets.length,
+      results: results
     });
 
   } catch (error) {
     console.error('Fatal error in update process:', error);
     return res.status(500).json({
       success: false,
-      error: error.message
+      error: error.message,
+      stack: error.stack
     });
   }
 }
