@@ -754,7 +754,6 @@ return (
     </button>
   )}
 </div>
-
               <div className="events-grid">
                 <div className="event-card crisis">
                   <h3>📉 Crisis Económica Global</h3>
