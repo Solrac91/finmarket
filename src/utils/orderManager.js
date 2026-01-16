@@ -1,164 +1,245 @@
-// src/utils/orderManager.js - Sistema de órdenes avanzadas
+// src/utils/orderManager.js - Sistema de órdenes avanzadas con Supabase
 
+import { supabase } from '../supabaseClient';
 import { getAssetPrice } from './marketData';
 
 // Crear nueva orden
-export const createOrder = (userId, symbol, type, triggerPrice, shares) => {
-  const orders = getOrders(userId);
-  
-  const newOrder = {
-    id: Date.now(),
-    userId,
-    symbol,
-    type, // 'stop-loss' o 'take-profit'
-    triggerPrice: parseFloat(triggerPrice),
-    shares: parseFloat(shares),
-    status: 'pending',
-    createdAt: new Date().toISOString()
-  };
-  
-  orders.push(newOrder);
-  localStorage.setItem(`finmarket_orders_${userId}`, JSON.stringify(orders));
-  
-  return newOrder;
+export const createOrder = async (userId, symbol, type, triggerPrice, shares) => {
+  try {
+    const newOrder = {
+      user_id: userId,
+      asset_symbol: symbol,
+      order_type: type, // 'stop-loss' o 'take-profit'
+      trigger_price: parseFloat(triggerPrice),
+      quantity: parseFloat(shares),
+      status: 'pending'
+    };
+    
+    const { data, error } = await supabase
+      .from('orders')
+      .insert([newOrder])
+      .select()
+      .single();
+    
+    if (error) throw error;
+    
+    return data;
+  } catch (error) {
+    console.error('Error creating order:', error);
+    return null;
+  }
 };
 
 // Obtener órdenes de un usuario
-export const getOrders = (userId, status = null) => {
-  const orders = JSON.parse(localStorage.getItem(`finmarket_orders_${userId}`) || '[]');
-  
-  if (status) {
-    return orders.filter(order => order.status === status);
+export const getOrders = async (userId, status = null) => {
+  try {
+    let query = supabase
+      .from('orders')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    
+    if (status) {
+      query = query.eq('status', status);
+    }
+    
+    const { data, error } = await query;
+    
+    if (error) throw error;
+    
+    return data || [];
+  } catch (error) {
+    console.error('Error getting orders:', error);
+    return [];
   }
-  
-  return orders;
 };
 
 // Verificar y ejecutar órdenes pendientes
-export const checkAndExecuteOrders = (userId, userData, setUserData) => {
-  const pendingOrders = getOrders(userId, 'pending');
-  let ordersExecuted = false;
-  
-  pendingOrders.forEach(order => {
-    const currentPrice = getAssetPrice(order.symbol);
-    let shouldExecute = false;
+export const checkAndExecuteOrders = async (userId, currentUser, setCurrentUser) => {
+  try {
+    const pendingOrders = await getOrders(userId, 'pending');
+    let ordersExecuted = false;
     
-    if (order.type === 'stop-loss' && currentPrice <= order.triggerPrice) {
-      shouldExecute = true;
-    } else if (order.type === 'take-profit' && currentPrice >= order.triggerPrice) {
-      shouldExecute = true;
+    for (const order of pendingOrders) {
+      const currentPrice = await getAssetPrice(order.asset_symbol);
+      let shouldExecute = false;
+      
+      if (order.order_type === 'stop-loss' && currentPrice <= order.trigger_price) {
+        shouldExecute = true;
+      } else if (order.order_type === 'take-profit' && currentPrice >= order.trigger_price) {
+        shouldExecute = true;
+      }
+      
+      if (shouldExecute) {
+        await executeOrder(order, currentPrice, currentUser, setCurrentUser);
+        ordersExecuted = true;
+      }
     }
     
-    if (shouldExecute) {
-      // Ejecutar venta automática
-      executeOrder(order, currentPrice, userData, setUserData);
-      ordersExecuted = true;
-    }
-  });
-  
-  return ordersExecuted;
+    return ordersExecuted;
+  } catch (error) {
+    console.error('Error checking orders:', error);
+    return false;
+  }
 };
 
 // Ejecutar una orden específica
-const executeOrder = (order, executionPrice, userData, setUserData) => {
-  // Verificar que el usuario tiene el activo
-  const portfolioAsset = userData.portfolio.find(p => p.symbol === order.symbol);
-  
-  if (!portfolioAsset || portfolioAsset.shares < order.shares) {
-    // Cancelar orden si no hay suficientes acciones
-    cancelOrder(order.userId, order.id);
-    return;
+const executeOrder = async (order, executionPrice, currentUser, setCurrentUser) => {
+  try {
+    // 1. Obtener asset_id del símbolo
+    const { data: assetData } = await supabase
+      .from('assets')
+      .select('id, name')
+      .eq('symbol', order.asset_symbol)
+      .single();
+    
+    if (!assetData) {
+      console.error('Asset not found:', order.asset_symbol);
+      await cancelOrder(order.user_id, order.id);
+      return;
+    }
+    
+    // 2. Verificar que el usuario tiene el activo en portfolio
+    const { data: portfolioItem } = await supabase
+      .from('portfolios')
+      .select('*')
+      .eq('user_id', order.user_id)
+      .eq('asset_id', assetData.id)
+      .single();
+    
+    if (!portfolioItem || portfolioItem.quantity < order.quantity) {
+      // No tiene suficientes acciones, cancelar orden
+      await cancelOrder(order.user_id, order.id);
+      return;
+    }
+    
+    // 3. Calcular valores
+    const total = order.quantity * executionPrice;
+    const commission = total * 0.001; // 0.1% comisión
+    const netTotal = total - commission;
+    const newBalance = currentUser.balance + netTotal;
+    
+    // 4. Actualizar balance del usuario
+    const { error: balanceError } = await supabase
+      .from('users')
+      .update({ balance: newBalance })
+      .eq('id', order.user_id);
+    
+    if (balanceError) throw balanceError;
+    
+    // 5. Crear transacción de venta
+    const { error: transactionError } = await supabase
+      .from('transactions')
+      .insert([{
+        user_id: order.user_id,
+        asset_id: assetData.id,
+        type: 'sell',
+        quantity: order.quantity,
+        price: executionPrice,
+        total: netTotal,
+        balance_after: newBalance
+      }]);
+    
+    if (transactionError) throw transactionError;
+    
+    // 6. Actualizar o eliminar del portfolio
+    if (order.quantity === portfolioItem.quantity) {
+      // Vender todo - eliminar del portfolio
+      const { error: deleteError } = await supabase
+        .from('portfolios')
+        .delete()
+        .eq('id', portfolioItem.id);
+      
+      if (deleteError) throw deleteError;
+    } else {
+      // Venta parcial - actualizar cantidad
+      const newQuantity = portfolioItem.quantity - order.quantity;
+      const { error: updateError } = await supabase
+        .from('portfolios')
+        .update({ quantity: newQuantity })
+        .eq('id', portfolioItem.id);
+      
+      if (updateError) throw updateError;
+    }
+    
+    // 7. Marcar orden como ejecutada
+    await markOrderAsExecuted(order.user_id, order.id, executionPrice);
+    
+    // 8. Actualizar estado local del usuario
+    setCurrentUser({
+      ...currentUser,
+      balance: newBalance
+    });
+    
+    // 9. Notificación
+    showOrderExecutedNotification(order, executionPrice);
+    
+  } catch (error) {
+    console.error('Error executing order:', error);
   }
-  
-  // Realizar venta
-  const total = order.shares * executionPrice;
-  const newBalance = userData.balance + total;
-  
-  let newPortfolio;
-  if (order.shares === portfolioAsset.shares) {
-    // Vender todo
-    newPortfolio = userData.portfolio.filter(p => p.symbol !== order.symbol);
-  } else {
-    // Vender parcial
-    newPortfolio = userData.portfolio.map(p =>
-      p.symbol === order.symbol
-        ? {
-            ...p,
-            shares: p.shares - order.shares,
-            value: (p.shares - order.shares) * executionPrice
-          }
-        : p
-    );
-  }
-  
-  // Registrar transacción
-  const newTransaction = {
-    type: 'sell',
-    symbol: order.symbol,
-    shares: order.shares,
-    price: executionPrice,
-    date: new Date().toISOString().split('T')[0],
-    time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-    orderType: order.type, // Para identificar que fue automática
-    triggeredBy: order.type === 'stop-loss' ? 'Stop-Loss' : 'Take-Profit'
-  };
-  
-  // Actualizar estado del usuario
-  const updatedData = {
-    balance: newBalance,
-    portfolio: newPortfolio,
-    transactions: [newTransaction, ...userData.transactions]
-  };
-  
-  setUserData(updatedData);
-  
-  // Marcar orden como ejecutada
-  markOrderAsExecuted(order.userId, order.id, executionPrice);
-  
-  // Notificación
-  showOrderExecutedNotification(order, executionPrice);
 };
 
 // Marcar orden como ejecutada
-const markOrderAsExecuted = (userId, orderId, executionPrice) => {
-  const orders = getOrders(userId);
-  const updated = orders.map(order => 
-    order.id === orderId 
-      ? {
-          ...order,
-          status: 'executed',
-          executedAt: new Date().toISOString(),
-          executionPrice
-        }
-      : order
-  );
-  
-  localStorage.setItem(`finmarket_orders_${userId}`, JSON.stringify(updated));
+const markOrderAsExecuted = async (userId, orderId, executionPrice) => {
+  try {
+    const { error } = await supabase
+      .from('orders')
+      .update({
+        status: 'executed',
+        executed_at: new Date().toISOString(),
+        execution_price: executionPrice
+      })
+      .eq('id', orderId);
+    
+    if (error) throw error;
+  } catch (error) {
+    console.error('Error marking order as executed:', error);
+  }
 };
 
 // Cancelar orden
-export const cancelOrder = (userId, orderId) => {
-  const orders = getOrders(userId);
-  const updated = orders.map(order =>
-    order.id === orderId
-      ? { ...order, status: 'cancelled', cancelledAt: new Date().toISOString() }
-      : order
-  );
-  
-  localStorage.setItem(`finmarket_orders_${userId}`, JSON.stringify(updated));
+export const cancelOrder = async (userId, orderId) => {
+  try {
+    const { error } = await supabase
+      .from('orders')
+      .update({
+        status: 'cancelled',
+        cancelled_at: new Date().toISOString()
+      })
+      .eq('id', orderId)
+      .eq('user_id', userId);
+    
+    if (error) throw error;
+    
+    return true;
+  } catch (error) {
+    console.error('Error cancelling order:', error);
+    return false;
+  }
 };
 
 // Eliminar orden
-export const deleteOrder = (userId, orderId) => {
-  const orders = getOrders(userId);
-  const filtered = orders.filter(order => order.id !== orderId);
-  localStorage.setItem(`finmarket_orders_${userId}`, JSON.stringify(filtered));
+export const deleteOrder = async (userId, orderId) => {
+  try {
+    const { error } = await supabase
+      .from('orders')
+      .delete()
+      .eq('id', orderId)
+      .eq('user_id', userId);
+    
+    if (error) throw error;
+    
+    return true;
+  } catch (error) {
+    console.error('Error deleting order:', error);
+    return false;
+  }
 };
 
 // Notificación visual
 const showOrderExecutedNotification = (order, price) => {
-  const orderType = order.type === 'stop-loss' ? 'Stop-Loss' : 'Take-Profit';
-  const message = `✓ ${orderType} ejecutado: ${order.symbol} vendido a €${price.toFixed(2)}`;
+  const orderType = order.order_type === 'stop-loss' ? 'Stop-Loss' : 'Take-Profit';
+  const message = `✓ ${orderType} ejecutado: ${order.asset_symbol} vendido a €${price.toFixed(2)}`;
   
   // Crear notificación temporal
   const notification = document.createElement('div');
