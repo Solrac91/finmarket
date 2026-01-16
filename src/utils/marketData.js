@@ -1,6 +1,8 @@
-// src/utils/marketData.js
+// src/utils/marketData.js - Con Supabase
 
-// Precios base de los activos (valores por defecto)
+import { supabase } from '../supabaseClient';
+
+// Precios base de los activos (valores por defecto de fallback)
 const BASE_PRICES = {
   'SAN': 3.89,
   'BBVA': 8.45,
@@ -69,80 +71,153 @@ const BASE_PRICES = {
   'VWO': 43.89
 };
 
-// Obtener precio actual de un activo
-export const getAssetPrice = (symbol) => {
-  const customPrices = JSON.parse(localStorage.getItem('finmarket_custom_prices') || '{}');
-  return customPrices[symbol] !== undefined ? customPrices[symbol] : BASE_PRICES[symbol];
+// Obtener precio actual de un activo desde Supabase
+export const getAssetPrice = async (symbol) => {
+  try {
+    const { data, error } = await supabase
+      .from('assets')
+      .select('current_price')
+      .eq('symbol', symbol)
+      .single();
+    
+    if (error) throw error;
+    
+    return data?.current_price || BASE_PRICES[symbol] || 0;
+  } catch (error) {
+    console.error('Error getting asset price:', error);
+    return BASE_PRICES[symbol] || 0;
+  }
 };
 
 // Actualizar precio de un activo (solo profesores)
-export const updateAssetPrice = (symbol, newPrice, changeType = 'manual') => {
-  const customPrices = JSON.parse(localStorage.getItem('finmarket_custom_prices') || '{}');
-  const oldPrice = customPrices[symbol] !== undefined ? customPrices[symbol] : BASE_PRICES[symbol];
-  
-  customPrices[symbol] = parseFloat(newPrice);
-  localStorage.setItem('finmarket_custom_prices', JSON.stringify(customPrices));
-  
-  // Guardar en historial
-  const history = JSON.parse(localStorage.getItem('finmarket_price_history') || '[]');
-  const historyEntry = {
-    id: Date.now(),
-    symbol: symbol,
-    oldPrice: oldPrice,
-    newPrice: parseFloat(newPrice),
-    changePercent: ((parseFloat(newPrice) - oldPrice) / oldPrice * 100).toFixed(2),
-    changeType: changeType, // 'manual', 'crisis', 'bull', etc.
-    timestamp: new Date().toISOString(),
-    date: new Date().toLocaleDateString('es-ES'),
-    time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
-  };
-  
-  history.unshift(historyEntry); // Añadir al principio
-  
-  // Mantener solo los últimos 500 cambios
-  if (history.length > 500) {
-    history.pop();
+export const updateAssetPrice = async (symbol, newPrice, changeType = 'manual', teacherId = null) => {
+  try {
+    // 1. Obtener asset_id y precio actual
+    const { data: assetData, error: assetError } = await supabase
+      .from('assets')
+      .select('id, current_price')
+      .eq('symbol', symbol)
+      .single();
+    
+    if (assetError) throw assetError;
+    
+    const oldPrice = assetData.current_price;
+    const changePercent = ((parseFloat(newPrice) - oldPrice) / oldPrice * 100).toFixed(2);
+    
+    // 2. Actualizar precio en tabla assets
+    const { error: updateError } = await supabase
+      .from('assets')
+      .update({ 
+        current_price: parseFloat(newPrice),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', assetData.id);
+    
+    if (updateError) throw updateError;
+    
+    // 3. Guardar en historial
+    const { error: historyError } = await supabase
+      .from('price_history')
+      .insert([{
+        asset_id: assetData.id,
+        price: parseFloat(newPrice),
+        changed_by: teacherId,
+        change_reason: changeType
+      }]);
+    
+    if (historyError) throw historyError;
+    
+    return true;
+  } catch (error) {
+    console.error('Error updating asset price:', error);
+    return false;
   }
-  
-  localStorage.setItem('finmarket_price_history', JSON.stringify(history));
-  
-  return true;
 };
 
 // Resetear todos los precios a valores base
-export const resetAllPrices = () => {
-  localStorage.removeItem('finmarket_custom_prices');
-  return true;
+export const resetAllPrices = async () => {
+  try {
+    // Obtener todos los activos
+    const { data: assets, error: fetchError } = await supabase
+      .from('assets')
+      .select('id, symbol, base_price');
+    
+    if (fetchError) throw fetchError;
+    
+    // Actualizar cada activo a su precio base
+    for (const asset of assets) {
+      await supabase
+        .from('assets')
+        .update({ 
+          current_price: asset.base_price,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', asset.id);
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error resetting prices:', error);
+    return false;
+  }
 };
 
-// Obtener todas las noticias
-export const getNews = () => {
-  const news = JSON.parse(localStorage.getItem('finmarket_news') || '[]');
-  return news.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+// Obtener todas las noticias desde Supabase
+export const getNews = async () => {
+  try {
+    const { data, error } = await supabase
+      .from('news')
+      .select('*')
+      .order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    
+    return data || [];
+  } catch (error) {
+    console.error('Error getting news:', error);
+    return [];
+  }
 };
 
 // Publicar noticia (solo profesores)
-export const publishNews = (title, content, impact = 'neutral') => {
-  const news = getNews();
-  const newArticle = {
-    id: Date.now(),
-    title,
-    content,
-    impact, // 'positive', 'negative', 'neutral'
-    timestamp: new Date().toISOString(),
-    author: 'Profesor'
-  };
-  news.unshift(newArticle);
-  localStorage.setItem('finmarket_news', JSON.stringify(news));
-  return newArticle;
+export const publishNews = async (title, content, impact = 'neutral', teacherId = null, category = 'general') => {
+  try {
+    const { data, error } = await supabase
+      .from('news')
+      .insert([{
+        title,
+        content,
+        impact,
+        category,
+        created_by: teacherId
+      }])
+      .select()
+      .single();
+    
+    if (error) throw error;
+    
+    return data;
+  } catch (error) {
+    console.error('Error publishing news:', error);
+    return null;
+  }
 };
 
 // Eliminar noticia
-export const deleteNews = (newsId) => {
-  const news = getNews();
-  const filtered = news.filter(n => n.id !== newsId);
-  localStorage.setItem('finmarket_news', JSON.stringify(filtered));
-  return true;
+export const deleteNews = async (newsId) => {
+  try {
+    const { error } = await supabase
+      .from('news')
+      .delete()
+      .eq('id', newsId);
+    
+    if (error) throw error;
+    
+    return true;
+  } catch (error) {
+    console.error('Error deleting news:', error);
+    return false;
+  }
 };
 
 // Obtener tiempo relativo (ej: "Hace 2 horas")
@@ -160,67 +235,149 @@ export const getRelativeTime = (timestamp) => {
   if (diffDays < 7) return `Hace ${diffDays} día${diffDays > 1 ? 's' : ''}`;
   return past.toLocaleDateString('es-ES');
 };
+
 // Obtener historial de cambios de precios
-export const getPriceHistory = () => {
-  const history = JSON.parse(localStorage.getItem('finmarket_price_history') || '[]');
-  return history;
+export const getPriceHistory = async () => {
+  try {
+    const { data, error } = await supabase
+      .from('price_history')
+      .select(`
+        *,
+        assets (symbol, name)
+      `)
+      .order('created_at', { ascending: false })
+      .limit(500);
+    
+    if (error) throw error;
+    
+    return data || [];
+  } catch (error) {
+    console.error('Error getting price history:', error);
+    return [];
+  }
 };
 
 // Limpiar historial
-export const clearPriceHistory = () => {
-  localStorage.removeItem('finmarket_price_history');
-  return true;
+export const clearPriceHistory = async () => {
+  try {
+    const { error } = await supabase
+      .from('price_history')
+      .delete()
+      .neq('id', '00000000-0000-0000-0000-000000000000'); // Eliminar todos
+    
+    if (error) throw error;
+    
+    return true;
+  } catch (error) {
+    console.error('Error clearing price history:', error);
+    return false;
+  }
 };
 
 // Obtener historial filtrado por símbolo
-export const getPriceHistoryBySymbol = (symbol) => {
-  const history = getPriceHistory();
-  return history.filter(entry => entry.symbol === symbol);
+export const getPriceHistoryBySymbol = async (symbol) => {
+  try {
+    const { data: asset, error: assetError } = await supabase
+      .from('assets')
+      .select('id')
+      .eq('symbol', symbol)
+      .single();
+    
+    if (assetError) throw assetError;
+    
+    const { data, error } = await supabase
+      .from('price_history')
+      .select('*')
+      .eq('asset_id', asset.id)
+      .order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    
+    return data || [];
+  } catch (error) {
+    console.error('Error getting price history by symbol:', error);
+    return [];
+  }
 };
-// En utils/marketData.js - AÑADIR esta función
 
-export const triggerMarketEvent = (eventType) => {
+// Trigger de eventos de mercado
+export const triggerMarketEvent = async (eventType, teacherId = null) => {
   const eventDetails = {
     'crisis': {
       title: '🔴 ALERTA: Crisis Económica Global Declarada',
       content: 'Los mercados mundiales experimentan una fuerte caída debido a incertidumbre económica. Todos los activos han sido impactados negativamente entre -15% y -30%.',
-      impact: 'negative'
+      impact: 'negative',
+      priceChange: -0.20 // -20%
     },
     'crash': {
       title: '💥 CRASH DEL MERCADO: Caída Histórica',
-      content: 'Se ha registrado una de las mayores caídas históricas del mercado. Los activos han perdido entre -40% y -60% de su valor. Los inversores están en modo pánico.',
-      impact: 'negative'
+      content: 'Se ha registrado una de las mayores caídas históricas del mercado. Los activos han perdido entre -40% y -60% de su valor.',
+      impact: 'negative',
+      priceChange: -0.50 // -50%
     },
     'bull': {
       title: '🚀 Bull Market: Mercado Alcista Confirmado',
       content: 'Los mercados globales experimentan un rally alcista. El optimismo impulsa todos los activos al alza con ganancias entre +15% y +25%.',
-      impact: 'positive'
+      impact: 'positive',
+      priceChange: 0.20 // +20%
     },
     'crypto-crash': {
       title: '₿ Crisis en Criptomonedas: Colapso del 50%',
-      content: 'El mercado de criptomonedas sufre un desplome masivo. Bitcoin, Ethereum y todas las altcoins pierden la mitad de su valor en cuestión de horas.',
-      impact: 'negative'
+      content: 'El mercado de criptomonedas sufre un desplome masivo. Bitcoin, Ethereum y todas las altcoins pierden la mitad de su valor.',
+      impact: 'negative',
+      category: 'Crypto',
+      priceChange: -0.50 // -50%
     },
     'commodities-boom': {
       title: '⛏️ Boom de Materias Primas',
-      content: 'Las materias primas experimentan una subida explosiva del +20% debido a escasez global y alta demanda. Oro, petróleo y metales industriales lideran las ganancias.',
-      impact: 'positive'
+      content: 'Las materias primas experimentan una subida explosiva del +20% debido a escasez global y alta demanda.',
+      impact: 'positive',
+      category: 'Materias Primas',
+      priceChange: 0.20 // +20%
     }
   };
 
   const event = eventDetails[eventType];
-  if (event) {
-    // Publicar noticia automática con timestamp especial
-    publishNews(event.title, event.content, event.impact);
+  if (!event) return false;
+
+  try {
+    // 1. Publicar noticia
+    await publishNews(event.title, event.content, event.impact, teacherId);
     
-    // Marcar como evento importante en localStorage
-    const events = JSON.parse(localStorage.getItem('finmarket_market_events') || '[]');
-    events.unshift({
-      id: Date.now(),
-      type: eventType,
-      timestamp: new Date().toISOString(),
-      title: event.title
-    });
-    localStorage.setItem('finmarket_market_events', JSON.stringify(events));
+    // 2. Crear evento de mercado
+    const { error: eventError } = await supabase
+      .from('market_events')
+      .insert([{
+        name: event.title,
+        description: event.content,
+        impact_percentage: event.priceChange * 100,
+        affected_category: event.category || null,
+        created_by: teacherId
+      }]);
+    
+    if (eventError) throw eventError;
+    
+    // 3. Aplicar cambios de precios
+    const { data: assets, error: assetsError } = await supabase
+      .from('assets')
+      .select('id, symbol, current_price, category');
+    
+    if (assetsError) throw assetsError;
+    
+    for (const asset of assets) {
+      // Si el evento es específico de una categoría, solo afectar esa categoría
+      if (event.category && asset.category !== event.category) continue;
+      
+      // Calcular nuevo precio con variación aleatoria
+      const variation = 1 + event.priceChange + (Math.random() * 0.1 - 0.05); // ±5% adicional
+      const newPrice = asset.current_price * variation;
+      
+      await updateAssetPrice(asset.symbol, newPrice, eventType, teacherId);
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error triggering market event:', error);
+    return false;
   }
 };
