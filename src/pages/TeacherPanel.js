@@ -78,8 +78,18 @@ useEffect(() => {
   };
   loadSettings();
 }, []);
-const [marketDay, setMarketDay] = useState(getMarketDay());
-const [periodInfo, setPeriodInfo] = useState(getMarketPeriodInfo());
+const [marketDay, setMarketDay] = useState(1);
+const [periodInfo, setPeriodInfo] = useState(getMarketPeriodInfo(1));
+
+// Cargar día de mercado desde Supabase
+useEffect(() => {
+  const loadMarketDay = async () => {
+    const day = await getMarketDay();
+    setMarketDay(day);
+    setPeriodInfo(getMarketPeriodInfo(day));
+  };
+  loadMarketDay();
+}, []);
 const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
 const [updateProgress, setUpdateProgress] = useState({ current: 0, total: 0, symbol: '' });
 

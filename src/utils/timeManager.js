@@ -1,45 +1,74 @@
-// src/utils/timeManager.js - Sistema de gestión temporal del mercado
+// src/utils/timeManager.js - Sistema de gestión temporal del mercado con Supabase
 
-// Obtener el día de mercado actual
-export const getMarketDay = () => {
-  const stored = localStorage.getItem('finmarket_market_day');
-  return stored ? parseInt(stored) : 1;
+import { supabase } from '../supabaseClient';
+
+// Obtener el día de mercado actual desde Supabase
+export const getMarketDay = async () => {
+  try {
+    const { data, error } = await supabase
+      .from('market_settings')
+      .select('value')
+      .eq('key', 'current_day')
+      .single();
+    
+    if (error) throw error;
+    
+    return data ? parseInt(data.value) : 1;
+  } catch (error) {
+    console.error('Error getting market day:', error);
+    return 1;
+  }
+};
+
+// Versión síncrona para uso en estados iniciales (fallback a 1)
+export const getMarketDaySync = () => {
+  // Esta función se usa solo para inicialización de estados
+  // El valor real se carga async después
+  return 1;
 };
 
 // Avanzar el tiempo del mercado
-export const advanceMarketTime = (days) => {
-  const currentDay = getMarketDay();
-  const newDay = currentDay + days;
-  localStorage.setItem('finmarket_market_day', newDay.toString());
-  
-  // Registrar el avance en historial
-  const history = getTimeHistory();
-  history.push({
-    id: Date.now(),
-    previousDay: currentDay,
-    newDay: newDay,
-    daysAdvanced: days,
-    timestamp: new Date().toISOString()
-  });
-  localStorage.setItem('finmarket_time_history', JSON.stringify(history));
-  
-  return newDay;
-};
-
-// Obtener historial de avances temporales
-export const getTimeHistory = () => {
-  const stored = localStorage.getItem('finmarket_time_history');
-  return stored ? JSON.parse(stored) : [];
+export const advanceMarketTime = async (days) => {
+  try {
+    const currentDay = await getMarketDay();
+    const newDay = currentDay + days;
+    
+    // Actualizar día en Supabase
+    const { error } = await supabase
+      .from('market_settings')
+      .upsert([
+        { key: 'current_day', value: newDay.toString() }
+      ], { onConflict: 'key' });
+    
+    if (error) throw error;
+    
+    return newDay;
+  } catch (error) {
+    console.error('Error advancing market time:', error);
+    return null;
+  }
 };
 
 // Resetear tiempo de mercado
-export const resetMarketTime = () => {
-  localStorage.setItem('finmarket_market_day', '1');
-  localStorage.setItem('finmarket_time_history', '[]');
+export const resetMarketTime = async () => {
+  try {
+    const { error } = await supabase
+      .from('market_settings')
+      .upsert([
+        { key: 'current_day', value: '1' }
+      ], { onConflict: 'key' });
+    
+    if (error) throw error;
+    
+    return true;
+  } catch (error) {
+    console.error('Error resetting market time:', error);
+    return false;
+  }
 };
 
 // Calcular métricas basadas en tiempo
-export const getMarketPeriodInfo = (day = getMarketDay()) => {
+export const getMarketPeriodInfo = (day) => {
   const week = Math.ceil(day / 7);
   const month = Math.ceil(day / 30);
   const quarter = Math.ceil(day / 90);
@@ -64,8 +93,8 @@ export const getMarketPeriodInfo = (day = getMarketDay()) => {
   };
 };
 
-// Verificar si es día de pago de dividendos (cada trimestre, día 1)
-export const isDividendDay = (day = getMarketDay()) => {
+// Verificar si es día de pago de dividendos (cada trimestre, día múltiplo de 90)
+export const isDividendDay = (day) => {
   return day % 90 === 0;
 };
 
@@ -112,72 +141,108 @@ export const getScheduledEvents = (day) => {
 };
 
 // Aplicar dividendos a las carteras de todos los usuarios
-export const applyDividends = () => {
-  const dividendRate = 0.02; // 2% del valor por trimestre (ejemplo)
-  const updatedUsers = [];
-  
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
+export const applyDividends = async () => {
+  try {
+    const dividendRate = 0.02; // 2% del valor por trimestre
+    const updatedUsers = [];
     
-    if (key && key.startsWith('finmarket_userdata_')) {
-      try {
-        const userData = JSON.parse(localStorage.getItem(key));
+    // 1. Obtener todos los estudiantes
+    const { data: users, error: usersError } = await supabase
+      .from('users')
+      .select('id, email, balance')
+      .eq('role', 'student');
+    
+    if (usersError) throw usersError;
+    
+    // 2. Para cada estudiante, calcular dividendos
+    for (const user of users) {
+      // Obtener portfolio con activos IBEX 35
+      const { data: portfolio, error: portfolioError } = await supabase
+        .from('portfolios')
+        .select(`
+          *,
+          assets (id, symbol, name, current_price, category)
+        `)
+        .eq('user_id', user.id)
+        .eq('assets.category', 'IBEX 35');
+      
+      if (portfolioError) throw portfolioError;
+      
+      if (!portfolio || portfolio.length === 0) continue;
+      
+      let totalDividends = 0;
+      
+      // Calcular dividendos por cada posición
+      for (const position of portfolio) {
+        const assetValue = position.quantity * position.assets.current_price;
+        const dividend = assetValue * dividendRate;
+        totalDividends += dividend;
         
-        // Aplicar dividendos solo a acciones IBEX 35
-        userData.portfolio.forEach(asset => {
-          const assetCategory = getAssetCategory(asset.symbol);
-          if (assetCategory === 'IBEX 35') {
-            const dividend = asset.value * dividendRate;
-            userData.balance += dividend;
-            
-            // Registrar transacción de dividendo
-            userData.transactions.unshift({
-              type: 'dividend',
-              symbol: asset.symbol,
-              amount: dividend,
-              date: new Date().toISOString().split('T')[0],
-              time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-              description: `Dividendo trimestral de ${asset.symbol}`
-            });
-          }
-        });
+        // Registrar transacción de dividendo
+        await supabase
+          .from('transactions')
+          .insert([{
+            user_id: user.id,
+            asset_id: position.assets.id,
+            type: 'dividend',
+            quantity: 0,
+            price: 0,
+            total: dividend,
+            balance_after: user.balance + totalDividends
+          }]);
+      }
+      
+      // 3. Actualizar balance del usuario
+      if (totalDividends > 0) {
+        await supabase
+          .from('users')
+          .update({ balance: user.balance + totalDividends })
+          .eq('id', user.id);
         
-        localStorage.setItem(key, JSON.stringify(userData));
-        updatedUsers.push(key.replace('finmarket_userdata_', ''));
-      } catch (e) {
-        console.error('Error applying dividends:', e);
+        updatedUsers.push(user.email);
       }
     }
+    
+    return updatedUsers;
+  } catch (error) {
+    console.error('Error applying dividends:', error);
+    return [];
   }
-  
-  return updatedUsers;
-};
-
-// Función auxiliar para obtener categoría de activo
-const getAssetCategory = (symbol) => {
-  const ibex35 = ['SAN', 'BBVA', 'IBE', 'TEF', 'ITX', 'REP', 'CABK', 'ACS', 'FER', 'ENG', 
-                  'AENA', 'IAG', 'NTGY', 'RED', 'ELE', 'GRF', 'MAP', 'COL', 'MRL', 'ACX',
-                  'ANA', 'SAB', 'CLNX', 'FDR', 'IDR', 'LOG', 'MEL', 'PHM', 'ROVI', 'SLR',
-                  'UNI', 'VIS', 'SGRE', 'AMA', 'ALM'];
-  
-  return ibex35.includes(symbol) ? 'IBEX 35' : null;
 };
 
 // Aplicar volatilidad diaria automática a todos los precios
-export const applyDailyVolatility = () => {
-  const customPrices = JSON.parse(localStorage.getItem('finmarket_custom_prices') || '{}');
-  let changesCount = 0;
-  
-  Object.keys(customPrices).forEach(symbol => {
-    const currentPrice = customPrices[symbol];
-    // Volatilidad diaria: ±0.5% a ±2%
-    const volatility = (Math.random() * 0.025) - 0.0125; // Entre -1.25% y +1.25%
-    const newPrice = currentPrice * (1 + volatility);
+export const applyDailyVolatility = async () => {
+  try {
+    // Obtener todos los activos
+    const { data: assets, error: assetsError } = await supabase
+      .from('assets')
+      .select('id, symbol, current_price');
     
-    customPrices[symbol] = parseFloat(newPrice.toFixed(2));
-    changesCount++;
-  });
-  
-  localStorage.setItem('finmarket_custom_prices', JSON.stringify(customPrices));
-  return changesCount;
+    if (assetsError) throw assetsError;
+    
+    let changesCount = 0;
+    
+    // Aplicar volatilidad a cada activo
+    for (const asset of assets) {
+      // Volatilidad diaria: ±0.5% a ±2%
+      const volatility = (Math.random() * 0.025) - 0.0125; // Entre -1.25% y +1.25%
+      const newPrice = asset.current_price * (1 + volatility);
+      
+      // Actualizar precio
+      await supabase
+        .from('assets')
+        .update({ 
+          current_price: parseFloat(newPrice.toFixed(2)),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', asset.id);
+      
+      changesCount++;
+    }
+    
+    return changesCount;
+  } catch (error) {
+    console.error('Error applying daily volatility:', error);
+    return 0;
+  }
 };
