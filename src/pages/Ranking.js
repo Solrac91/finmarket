@@ -18,63 +18,93 @@ import {
   Search,
   Book,
 } from 'lucide-react';
+import { supabase } from '../supabaseClient';
 
 export default function Ranking() {
   const { currentUser, logout } = useAuth();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Obtener todos los usuarios del localStorage
-  const getAllUsers = () => {
-    const users = [];
+  // Obtener todos los usuarios desde Supabase
+const getAllUsers = async () => {
+  try {
+    // Obtener todos los estudiantes con sus portfolios
+    const { data: users, error: usersError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('role', 'student');
     
-    // Recorrer todas las keys del localStorage
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
+    if (usersError) throw usersError;
+    
+    const rankedData = [];
+    
+    for (const user of users) {
+      // Obtener portfolio del usuario
+      const { data: portfolioData } = await supabase
+        .from('portfolios')
+        .select(`
+          *,
+          assets (current_price)
+        `)
+        .eq('user_id', user.id);
       
-      // Buscar keys que contengan datos de usuario
-      if (key && key.startsWith('finmarket_userdata_')) {
-        try {
-          const userData = JSON.parse(localStorage.getItem(key));
-          const email = key.replace('finmarket_userdata_', '');
-          
-          // Calcular totales
-          const invested = userData.portfolio?.reduce((sum, item) => sum + item.value, 0) || 0;
-          const totalValue = userData.balance + invested;
-          const initialBalance = 50000;
-          const performance = ((totalValue - initialBalance) / initialBalance) * 100;
-          const profit = totalValue - initialBalance;
-          
-          users.push({
-            email: email,
-            name: email.split('@')[0],
-            balance: userData.balance || 0,
-            invested: invested,
-            totalValue: totalValue,
-            performance: performance,
-            profit: profit,
-            transactions: userData.transactions?.length || 0
-          });
-        } catch (e) {
-          console.error('Error parsing user data:', e);
-        }
-      }
+      // Calcular valor invertido
+      const invested = portfolioData?.reduce((sum, item) => 
+        sum + (item.quantity * item.assets.current_price), 0
+      ) || 0;
+      
+      const totalValue = user.balance + invested;
+      const initialBalance = 50000;
+      const performance = ((totalValue - initialBalance) / initialBalance) * 100;
+      const profit = totalValue - initialBalance;
+      
+      // Contar transacciones
+      const { count: transCount } = await supabase
+        .from('transactions')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id);
+      
+      rankedData.push({
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        balance: user.balance || 0,
+        invested: invested,
+        totalValue: totalValue,
+        performance: performance,
+        profit: profit,
+        transactions: transCount || 0
+      });
     }
     
     // Ordenar por valor total (descendente)
-    return users.sort((a, b) => b.totalValue - a.totalValue);
-  };
+    return rankedData.sort((a, b) => b.totalValue - a.totalValue);
+  } catch (error) {
+    console.error('Error getting users for ranking:', error);
+    return [];
+  }
+};
 
-  const [rankedUsers, setRankedUsers] = useState(getAllUsers());
+  const [rankedUsers, setRankedUsers] = useState([]);
+
+// Cargar usuarios al montar
+useEffect(() => {
+  const loadUsers = async () => {
+    const users = await getAllUsers();
+    setRankedUsers(users);
+  };
+  loadUsers();
+}, []);
 
   useEffect(() => {
-    // Actualizar ranking cada 5 segundos
-    const interval = setInterval(() => {
-      setRankedUsers(getAllUsers());
-    }, 5000);
+  // Actualizar ranking cada 10 segundos
+  const interval = setInterval(async () => {
+    const users = await getAllUsers();
+    setRankedUsers(users);
+  }, 10000); // Cambio a 10 segundos para no sobrecargar
 
-    return () => clearInterval(interval);
-  }, []);
+  return () => clearInterval(interval);
+}, []);
 
   const filteredUsers = rankedUsers.filter(user => 
     user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -244,7 +274,7 @@ export default function Ranking() {
                 <div className="th">Operaciones</div>
               </div>
               {filteredUsers.map((user, index) => {
-                const isCurrentUser = user.email === currentUser?.id;
+                const isCurrentUser = user.id === currentUser?.id;
                 return (
                   <div 
                     key={user.email} 

@@ -20,6 +20,7 @@ import {
   Wallet,
   Shield
 } from 'lucide-react';
+import { supabase } from '../supabaseClient';
 
 export default function Resources() {
   const { currentUser, logout } = useAuth();
@@ -35,24 +36,47 @@ export default function Resources() {
     fileUrl: ''
   });
 
-  // Cargar recursos desde localStorage
- const [resources, setResources] = useState(() => {
-  const stored = localStorage.getItem('finmarket_resources');
-  if (stored) {
-    const parsed = JSON.parse(stored);
-    // Filtrar solo recursos subidos por profesores, no los del sistema
-    const userResources = parsed.filter(r => !r.isDefault);
-    // Combinar con recursos por defecto actualizados
-    return [...getDefaultResources(), ...userResources];
-  }
-  return getDefaultResources();
-});
+  // Estado de recursos
+const [resources, setResources] = useState([]);
 
-  // Guardar cuando cambien
-  useEffect(() => {
-    localStorage.setItem('finmarket_resources', JSON.stringify(resources));
-  }, [resources]);
+// Cargar recursos desde Supabase
+useEffect(() => {
+  const loadResources = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('resources')
+        .select('*')
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      
+      // Combinar recursos de BD con recursos por defecto
+      const allResources = [
+        ...getDefaultResources(),
+        ...(data || []).map(r => ({
+          id: r.id,
+          title: r.title,
+          description: r.description,
+          category: r.category,
+          uploadedBy: 'teacher',
+          uploadDate: r.created_at,
+          downloads: 0,
+          fileUrl: r.url,
+          isDefault: false
+        }))
+      ];
+      
+      setResources(allResources);
+    } catch (error) {
+      console.error('Error loading resources:', error);
+      setResources(getDefaultResources());
+    }
+  };
+  
+  loadResources();
+}, []);
 
+  
   const handleLogout = () => {
     logout();
     navigate('/');
@@ -74,18 +98,38 @@ export default function Resources() {
     return matchesCategory && matchesSearch;
   });
 
-  const handleUpload = () => {
-    if (!uploadData.title || !uploadData.description) {
-      alert('Completa todos los campos');
-      return;
-    }
+  const handleUpload = async () => {
+  if (!uploadData.title || !uploadData.description) {
+    alert('Completa todos los campos');
+    return;
+  }
 
+  try {
+    const { data, error } = await supabase
+      .from('resources')
+      .insert([{
+        title: uploadData.title,
+        description: uploadData.description,
+        category: uploadData.category,
+        url: uploadData.fileUrl,
+        created_by: currentUser.id
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    // Añadir a lista local
     const newResource = {
-      id: Date.now(),
-      ...uploadData,
-      uploadedBy: currentUser.email,
-      uploadDate: new Date().toISOString(),
-      downloads: 0
+      id: data.id,
+      title: data.title,
+      description: data.description,
+      category: data.category,
+      uploadedBy: 'teacher',
+      uploadDate: data.created_at,
+      downloads: 0,
+      fileUrl: data.url,
+      isDefault: false
     };
 
     setResources([newResource, ...resources]);
@@ -97,20 +141,38 @@ export default function Resources() {
       fileUrl: ''
     });
     alert('✅ Recurso añadido correctamente');
-  };
-
-  const handleDelete = (id) => {
-    if (window.confirm('¿Eliminar este recurso?')) {
+  } catch (error) {
+    console.error('Error uploading resource:', error);
+    alert('❌ Error al subir recurso');
+  }
+};
+const handleDelete = async (id) => {
+  const resource = resources.find(r => r.id === id);
+  
+  // No permitir borrar recursos por defecto
+  if (resource?.isDefault) {
+    alert('No puedes eliminar recursos del sistema');
+    return;
+  }
+  
+  if (window.confirm('¿Eliminar este recurso?')) {
+    try {
+      const { error } = await supabase
+        .from('resources')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      
       setResources(resources.filter(r => r.id !== id));
+      alert('✅ Recurso eliminado');
+    } catch (error) {
+      console.error('Error deleting resource:', error);
+      alert('❌ Error al eliminar recurso');
     }
-  };
-
+  }
+};
 const handleDownload = (resource) => {
-  // Incrementar contador de descargas
-  setResources(resources.map(r => 
-    r.id === resource.id ? { ...r, downloads: r.downloads + 1 } : r
-  ));
-
   // Si es recurso por defecto, generar PDF
   if (resource.isDefault) {
     downloadEducationalPDF(resource.id);

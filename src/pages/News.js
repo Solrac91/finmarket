@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../supabaseClient';
 import { getNews, getRelativeTime } from '../utils/marketData';
 import './News.css';
 import { 
@@ -25,16 +26,26 @@ export default function News() {
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterImpact, setFilterImpact] = useState('all');
-  const [allNews, setAllNews] = useState(getNews());
+  const [allNews, setAllNews] = useState([]);
+
+// Cargar noticias desde Supabase al montar
+useEffect(() => {
+  const loadNews = async () => {
+    const news = await getNews();
+    setAllNews(news);
+  };
+  loadNews();
+}, []);
 
   useEffect(() => {
-    // Actualizar noticias cada 10 segundos
-    const interval = setInterval(() => {
-      setAllNews(getNews());
-    }, 10000);
+  // Actualizar noticias cada 15 segundos
+  const interval = setInterval(async () => {
+    const news = await getNews();
+    setAllNews(news);
+  }, 15000); // 15 segundos para no sobrecargar
 
-    return () => clearInterval(interval);
-  }, []);
+  return () => clearInterval(interval);
+}, []);
 
   const handleLogout = () => {
     logout();

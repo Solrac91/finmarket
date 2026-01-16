@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import { supabase } from '../supabaseClient';
 import { useAuth } from '../context/AuthContext';
 import { calculateAllMetrics } from '../utils/studentAnalytics';
 import { getAssetPrice } from '../utils/marketData';
@@ -20,6 +21,7 @@ import {
 import { generateStudentReport } from '../utils/pdfExport';
 import { Download } from 'lucide-react';
 import { getMarketDay, calculateAnnualizedReturn } from '../utils/timeManager';
+
 export default function StudentAnalysis() {
   const { email } = useParams();
   const navigate = useNavigate();
@@ -29,46 +31,96 @@ export default function StudentAnalysis() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Verificar que es un profesor
-    if (currentUser?.role !== 'teacher') {
-      navigate('/dashboard');
-      return;
-    }
+  // Verificar que es un profesor
+  if (currentUser?.role !== 'teacher') {
+    navigate('/dashboard');
+    return;
+  }
 
-    // Cargar datos del estudiante
-    const key = `finmarket_userdata_${email}`;
-    const data = localStorage.getItem(key);
-    
-    if (!data) {
-      alert('Estudiante no encontrado');
+  const loadStudentData = async () => {
+    try {
+      setLoading(true);
+      
+      // 1. Buscar estudiante por email
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', email)
+        .eq('role', 'student')
+        .single();
+      
+      if (userError || !userData) {
+        alert('Estudiante no encontrado');
+        navigate('/teacher');
+        return;
+      }
+      
+      // 2. Cargar portfolio
+      const { data: portfolioData, error: portfolioError } = await supabase
+        .from('portfolios')
+        .select(`
+          *,
+          assets (id, symbol, name, current_price)
+        `)
+        .eq('user_id', userData.id);
+      
+      if (portfolioError) throw portfolioError;
+      
+      // 3. Cargar transacciones
+      const { data: transactionsData, error: transError } = await supabase
+        .from('transactions')
+        .select(`
+          *,
+          assets (symbol, name)
+        `)
+        .eq('user_id', userData.id)
+        .order('created_at', { ascending: false });
+      
+      if (transError) throw transError;
+      
+      // 4. Formatear datos para compatibilidad
+      const formattedPortfolio = portfolioData.map(item => ({
+        symbol: item.assets.symbol,
+        name: item.assets.name,
+        shares: item.quantity,
+        avgPrice: item.average_buy_price,
+        currentPrice: item.assets.current_price,
+        currentValue: item.quantity * item.assets.current_price
+      }));
+      
+      const formattedTransactions = transactionsData.map(tx => ({
+        type: tx.type,
+        symbol: tx.assets.symbol,
+        shares: tx.quantity,
+        price: tx.price,
+        date: new Date(tx.created_at).toLocaleDateString('es-ES'),
+        time: new Date(tx.created_at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+      }));
+      
+      const fullData = {
+        balance: userData.balance,
+        portfolio: formattedPortfolio,
+        transactions: formattedTransactions,
+        email: userData.email,
+        name: userData.name
+      };
+      
+      setStudentData(fullData);
+      
+      // 5. Calcular métricas
+      const calculatedMetrics = calculateAllMetrics(fullData);
+      setMetrics(calculatedMetrics);
+      
+      setLoading(false);
+    } catch (error) {
+      console.error('Error loading student data:', error);
+      alert('Error al cargar datos del estudiante');
       navigate('/teacher');
-      return;
     }
-
-    const userData = JSON.parse(data);
-    
-    // Actualizar precios actuales del portfolio
-    const updatedPortfolio = userData.portfolio.map(asset => ({
-      ...asset,
-      currentPrice: getAssetPrice(asset.symbol),
-      currentValue: asset.shares * getAssetPrice(asset.symbol)
-    }));
-
-    const fullData = {
-      ...userData,
-      portfolio: updatedPortfolio,
-      email: email,
-      name: email.split('@')[0]
-    };
-
-    setStudentData(fullData);
-    
-    // Calcular métricas
-    const calculatedMetrics = calculateAllMetrics(fullData);
-    setMetrics(calculatedMetrics);
-    
-    setLoading(false);
-  }, [email, currentUser, navigate]);
+  };
+  
+  loadStudentData();
+}, [email, currentUser, navigate]);
 
   if (loading) {
     return (
