@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { updateAssetPrice, publishNews as publishNewsUtil, getNews, deleteNews, getRelativeTime, getAssetPrice, getPriceHistory, clearPriceHistory, triggerMarketEvent } from '../utils/marketData';
+import { supabase } from '../supabaseClient';
 import { updateAllRealPrices } from '../utils/priceAPI';
 import './TeacherPanel.css';
 import { 
@@ -44,14 +45,39 @@ export default function TeacherPanel() {
   const [newPrice, setNewPrice] = useState('');
   const [newsTitle, setNewsTitle] = useState('');
   const [newsContent, setNewsContent] = useState('');
-  const [publishedNews, setPublishedNews] = useState(getNews());
-  const [priceHistory, setPriceHistory] = useState(getPriceHistory());
+  const [publishedNews, setPublishedNews] = useState([]);
+const [priceHistory, setPriceHistory] = useState([]);
+
+// Cargar noticias e historial desde Supabase
+useEffect(() => {
+  const loadData = async () => {
+    const news = await getNews();
+    const history = await getPriceHistory();
+    setPublishedNews(news);
+    setPriceHistory(history);
+  };
+  loadData();
+}, []);
   const [editingNewsId, setEditingNewsId] = useState(null);
   const [newsImpact, setNewsImpact] = useState('positive');
-const [settings, setSettings] = useState(() => {
-  const stored = localStorage.getItem('finmarket_settings');
-  return stored ? JSON.parse(stored) : { commissionEnabled: false, commissionRate: 0.1 };
-});
+const [settings, setSettings] = useState({ commissionEnabled: false, commissionRate: 0.1 });
+
+// Cargar settings desde Supabase
+useEffect(() => {
+  const loadSettings = async () => {
+    const { data } = await supabase
+      .from('market_settings')
+      .select('*')
+      .in('key', ['commission_enabled', 'commission_rate']);
+    
+    if (data && data.length > 0) {
+      const commissionEnabled = data.find(s => s.key === 'commission_enabled')?.value === 'true';
+      const commissionRate = parseFloat(data.find(s => s.key === 'commission_rate')?.value || '0.1');
+      setSettings({ commissionEnabled, commissionRate });
+    }
+  };
+  loadSettings();
+}, []);
 const [marketDay, setMarketDay] = useState(getMarketDay());
 const [periodInfo, setPeriodInfo] = useState(getMarketPeriodInfo());
 const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
@@ -63,46 +89,89 @@ const [updateProgress, setUpdateProgress] = useState({ current: 0, total: 0, sym
     }
   }, [currentUser, navigate]);
 
-  const getAllStudents = () => {
+  const getAllStudents = async () => {
+  try {
+    // Obtener todos los usuarios estudiantes
+    const { data: usersData, error: usersError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('role', 'student');
+    
+    if (usersError) throw usersError;
+    
     const students = [];
     
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
+    for (const user of usersData) {
+      // Obtener portfolio del estudiante
+      const { data: portfolioData } = await supabase
+        .from('portfolios')
+        .select(`
+          *,
+          assets (current_price)
+        `)
+        .eq('user_id', user.id);
       
-      if (key && key.startsWith('finmarket_userdata_')) {
-        try {
-          const userData = JSON.parse(localStorage.getItem(key));
-          const email = key.replace('finmarket_userdata_', '');
-          
-          const invested = userData.portfolio?.reduce((sum, item) => sum + item.value, 0) || 0;
-          const totalValue = userData.balance + invested;
-          const initialBalance = 50000;
-          const performance = ((totalValue - initialBalance) / initialBalance) * 100;
-          
-          students.push({
-            email: email,
-            name: email.split('@')[0],
-            balance: userData.balance || 0,
-            invested: invested,
-            totalValue: totalValue,
-            performance: performance,
-            transactions: userData.transactions?.length || 0,
-            portfolioCount: userData.portfolio?.length || 0
-          });
-        } catch (e) {
-          console.error('Error parsing student data:', e);
-        }
-      }
+      // Calcular valor invertido
+      const invested = portfolioData?.reduce((sum, item) => 
+        sum + (item.quantity * item.assets.current_price), 0
+      ) || 0;
+      
+      const totalValue = user.balance + invested;
+      const initialBalance = 50000;
+      const performance = ((totalValue - initialBalance) / initialBalance) * 100;
+      
+      // Contar transacciones
+      const { count: transCount } = await supabase
+        .from('transactions')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id);
+      
+      students.push({
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        balance: user.balance || 0,
+        invested: invested,
+        totalValue: totalValue,
+        performance: performance,
+        transactions: transCount || 0,
+        portfolioCount: portfolioData?.length || 0
+      });
     }
     
     return students.sort((a, b) => b.totalValue - a.totalValue);
-  };
+  } catch (error) {
+    console.error('Error getting students:', error);
+    return [];
+  }
+};
 
-  const [students, setStudents] = useState(getAllStudents());
-const updateSettings = (newSettings) => {
-  setSettings(newSettings);
-  localStorage.setItem('finmarket_settings', JSON.stringify(newSettings));
-  alert('✅ Configuración actualizada correctamente');
+  const [students, setStudents] = useState([]);
+
+// Cargar estudiantes desde Supabase
+useEffect(() => {
+  const loadStudents = async () => {
+    const studentsData = await getAllStudents();
+    setStudents(studentsData);
+  };
+  loadStudents();
+}, []);
+const updateSettings = async (newSettings) => {
+  try {
+    // Actualizar en Supabase
+    await supabase
+      .from('market_settings')
+      .upsert([
+        { key: 'commission_enabled', value: newSettings.commissionEnabled.toString() },
+        { key: 'commission_rate', value: newSettings.commissionRate.toString() }
+      ], { onConflict: 'key' });
+    
+    setSettings(newSettings);
+    alert('✅ Configuración actualizada correctamente');
+  } catch (error) {
+    console.error('Error updating settings:', error);
+    alert('❌ Error al actualizar configuración');
+  }
 };
 
 const handleUpdateRealPrices = async () => {
@@ -144,101 +213,106 @@ const handleUpdateRealPrices = async () => {
     navigate('/');
   };
 
-  const resetStudent = (studentEmail) => {
-    if (window.confirm(`¿Seguro que quieres resetear la cuenta de ${studentEmail}?`)) {
-      const key = `finmarket_userdata_${studentEmail}`;
-      const resetData = {
-        balance: 50000,
-        portfolio: [],
-        transactions: []
-      };
-      localStorage.setItem(key, JSON.stringify(resetData));
-      setStudents(getAllStudents());
-      alert('Cuenta reseteada correctamente');
+  const resetStudent = async (studentId) => {
+  const student = students.find(s => s.id === studentId);
+  if (!student) return;
+  
+  if (window.confirm(`¿Seguro que quieres resetear la cuenta de ${student.email}?`)) {
+    try {
+      // 1. Resetear balance
+      await supabase
+        .from('users')
+        .update({ balance: 50000 })
+        .eq('id', studentId);
+      
+      // 2. Eliminar portfolio
+      await supabase
+        .from('portfolios')
+        .delete()
+        .eq('user_id', studentId);
+      
+      // 3. Eliminar transacciones
+      await supabase
+        .from('transactions')
+        .delete()
+        .eq('user_id', studentId);
+      
+      // 4. Eliminar órdenes
+      await supabase
+        .from('orders')
+        .delete()
+        .eq('user_id', studentId);
+      
+      // Recargar estudiantes
+      const updatedStudents = await getAllStudents();
+      setStudents(updatedStudents);
+      
+      alert('✅ Cuenta reseteada correctamente');
+    } catch (error) {
+      console.error('Error resetting student:', error);
+      alert('❌ Error al resetear cuenta');
     }
-  };
+  }
+};
 
-  const deleteStudent = (studentEmail) => {
-    if (window.confirm(`¿Seguro que quieres eliminar permanentemente a ${studentEmail}?`)) {
-      const key = `finmarket_userdata_${studentEmail}`;
-      localStorage.removeItem(key);
-      setStudents(getAllStudents());
-      alert('Estudiante eliminado correctamente');
+  const deleteStudent = async (studentId) => {
+  const student = students.find(s => s.id === studentId);
+  if (!student) return;
+  
+  if (window.confirm(`¿Seguro que quieres eliminar permanentemente a ${student.email}?`)) {
+    try {
+      // Supabase eliminará en cascada portfolio, transactions, orders por las FK
+      const { error } = await supabase
+        .from('users')
+        .delete()
+        .eq('id', studentId);
+      
+      if (error) throw error;
+      
+      // Recargar estudiantes
+      const updatedStudents = await getAllStudents();
+      setStudents(updatedStudents);
+      
+      alert('✅ Estudiante eliminado correctamente');
+    } catch (error) {
+      console.error('Error deleting student:', error);
+      alert('❌ Error al eliminar estudiante');
     }
+  }
+};
+
+  const getAllAssets = async () => {
+  try {
+    const { data, error } = await supabase
+      .from('assets')
+      .select('*')
+      .order('symbol');
+    
+    if (error) throw error;
+    
+    return data.map(asset => ({
+      id: asset.id,
+      symbol: asset.symbol,
+      name: asset.name,
+      category: asset.category,
+      price: asset.current_price
+    }));
+  } catch (error) {
+    console.error('Error getting assets:', error);
+    return [];
+  }
+};
+
+  const [allAssets, setAllAssets] = useState([]);
+
+// Cargar activos desde Supabase
+useEffect(() => {
+  const loadAssets = async () => {
+    const assets = await getAllAssets();
+    setAllAssets(assets);
   };
-
-  const getAllAssets = () => [
-    { symbol: 'SAN', name: 'Banco Santander', category: 'IBEX 35' },
-    { symbol: 'BBVA', name: 'Banco Bilbao Vizcaya', category: 'IBEX 35' },
-    { symbol: 'IBE', name: 'Iberdrola', category: 'IBEX 35' },
-    { symbol: 'TEF', name: 'Telefónica', category: 'IBEX 35' },
-    { symbol: 'ITX', name: 'Inditex', category: 'IBEX 35' },
-    { symbol: 'REP', name: 'Repsol', category: 'IBEX 35' },
-    { symbol: 'CABK', name: 'CaixaBank', category: 'IBEX 35' },
-    { symbol: 'ACS', name: 'ACS', category: 'IBEX 35' },
-    { symbol: 'FER', name: 'Ferrovial', category: 'IBEX 35' },
-    { symbol: 'ENG', name: 'Enagás', category: 'IBEX 35' },
-    { symbol: 'AENA', name: 'Aena', category: 'IBEX 35' },
-    { symbol: 'IAG', name: 'IAG', category: 'IBEX 35' },
-    { symbol: 'NTGY', name: 'Naturgy', category: 'IBEX 35' },
-    { symbol: 'RED', name: 'Red Eléctrica', category: 'IBEX 35' },
-    { symbol: 'ELE', name: 'Endesa', category: 'IBEX 35' },
-    { symbol: 'GRF', name: 'Grifols', category: 'IBEX 35' },
-    { symbol: 'MAP', name: 'Mapfre', category: 'IBEX 35' },
-    { symbol: 'COL', name: 'Inmobiliaria Colonial', category: 'IBEX 35' },
-    { symbol: 'MRL', name: 'Merlin Properties', category: 'IBEX 35' },
-    { symbol: 'ACX', name: 'Acerinox', category: 'IBEX 35' },
-    { symbol: 'ANA', name: 'Acciona', category: 'IBEX 35' },
-    { symbol: 'SAB', name: 'Banco Sabadell', category: 'IBEX 35' },
-    { symbol: 'CLNX', name: 'Cellnex', category: 'IBEX 35' },
-    { symbol: 'FDR', name: 'Fluidra', category: 'IBEX 35' },
-    { symbol: 'IDR', name: 'Indra', category: 'IBEX 35' },
-    { symbol: 'LOG', name: 'Logista', category: 'IBEX 35' },
-    { symbol: 'MEL', name: 'Meliá Hotels', category: 'IBEX 35' },
-    { symbol: 'PHM', name: 'PharmaMar', category: 'IBEX 35' },
-    { symbol: 'ROVI', name: 'Laboratorios Rovi', category: 'IBEX 35' },
-    { symbol: 'SLR', name: 'Solaria', category: 'IBEX 35' },
-    { symbol: 'UNI', name: 'Unicaja', category: 'IBEX 35' },
-    { symbol: 'VIS', name: 'Viscofan', category: 'IBEX 35' },
-    { symbol: 'SGRE', name: 'Siemens Gamesa', category: 'IBEX 35' },
-    { symbol: 'AMA', name: 'Amadeus', category: 'IBEX 35' },
-    { symbol: 'ALM', name: 'Almirall', category: 'IBEX 35' },
-    { symbol: 'BTC', name: 'Bitcoin', category: 'Crypto' },
-    { symbol: 'ETH', name: 'Ethereum', category: 'Crypto' },
-    { symbol: 'BNB', name: 'Binance Coin', category: 'Crypto' },
-    { symbol: 'XRP', name: 'Ripple', category: 'Crypto' },
-    { symbol: 'ADA', name: 'Cardano', category: 'Crypto' },
-    { symbol: 'SOL', name: 'Solana', category: 'Crypto' },
-    { symbol: 'DOGE', name: 'Dogecoin', category: 'Crypto' },
-    { symbol: 'DOT', name: 'Polkadot', category: 'Crypto' },
-    { symbol: 'MATIC', name: 'Polygon', category: 'Crypto' },
-    { symbol: 'LTC', name: 'Litecoin', category: 'Crypto' },
-    { symbol: 'GOLD', name: 'Oro', category: 'Materias Primas' },
-    { symbol: 'SILVER', name: 'Plata', category: 'Materias Primas' },
-    { symbol: 'WTI', name: 'Petróleo WTI', category: 'Materias Primas' },
-    { symbol: 'BRENT', name: 'Petróleo Brent', category: 'Materias Primas' },
-    { symbol: 'NATGAS', name: 'Gas Natural', category: 'Materias Primas' },
-    { symbol: 'COPPER', name: 'Cobre', category: 'Materias Primas' },
-    { symbol: 'PLAT', name: 'Platino', category: 'Materias Primas' },
-    { symbol: 'WHEAT', name: 'Trigo', category: 'Materias Primas' },
-    { symbol: 'CORN', name: 'Maíz', category: 'Materias Primas' },
-    { symbol: 'COFFEE', name: 'Café', category: 'Materias Primas' },
-    { symbol: 'SPY', name: 'SPDR S&P 500 ETF', category: 'ETF' },
-    { symbol: 'QQQ', name: 'Invesco QQQ Trust', category: 'ETF' },
-    { symbol: 'VTI', name: 'Vanguard Total Stock Market', category: 'ETF' },
-    { symbol: 'IWM', name: 'iShares Russell 2000', category: 'ETF' },
-    { symbol: 'EEM', name: 'iShares MSCI Emerging Markets', category: 'ETF' },
-    { symbol: 'GLD', name: 'SPDR Gold Shares', category: 'ETF' },
-    { symbol: 'TLT', name: 'iShares 20+ Year Treasury Bond', category: 'ETF' },
-    { symbol: 'VEA', name: 'Vanguard FTSE Developed Markets', category: 'ETF' },
-    { symbol: 'AGG', name: 'iShares Core US Aggregate Bond', category: 'ETF' },
-    { symbol: 'VWO', name: 'Vanguard FTSE Emerging Markets', category: 'ETF' }
-  ].map(asset => ({
-    ...asset,
-    price: getAssetPrice(asset.symbol)
-  }));
-
-  const [allAssets, setAllAssets] = useState(getAllAssets());
+  loadAssets();
+}, []);
 
   const openPriceModal = (asset) => {
     setSelectedAsset(asset);
