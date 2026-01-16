@@ -23,6 +23,7 @@ import {
 import PriceChart from '../components/PriceChart';
 import { createOrder, getOrders, checkAndExecuteOrders, validateOrder, deleteOrder, cancelOrder } from '../utils/orderManager';
 import { getMarketDay, getMarketPeriodInfo } from '../utils/timeManager';
+import { supabase } from '../supabaseClient';
 
 export default function Dashboard() {
   const { currentUser, logout } = useAuth();
@@ -40,10 +41,24 @@ export default function Dashboard() {
   const [showChartModal, setShowChartModal] = useState(false);
   const [selectedChartAsset, setSelectedChartAsset] = useState(null);
 const [recentMarketEvents, setRecentMarketEvents] = useState([]);
-const [settings] = useState(() => {
-  const stored = localStorage.getItem('finmarket_settings');
-  return stored ? JSON.parse(stored) : { commissionEnabled: false, commissionRate: 0.1 };
-});
+const [settings, setSettings] = useState({ commissionEnabled: false, commissionRate: 0.1 });
+
+// Cargar configuración desde Supabase
+useEffect(() => {
+  const loadSettings = async () => {
+    const { data } = await supabase
+      .from('market_settings')
+      .select('*')
+      .in('key', ['commission_enabled', 'commission_rate']);
+    
+    if (data && data.length > 0) {
+      const commissionEnabled = data.find(s => s.key === 'commission_enabled')?.value === 'true';
+      const commissionRate = parseFloat(data.find(s => s.key === 'commission_rate')?.value || '0.1');
+      setSettings({ commissionEnabled, commissionRate });
+    }
+  };
+  loadSettings();
+}, []);
 const [showOrdersModal, setShowOrdersModal] = useState(false);
 const [stopLossPrice, setStopLossPrice] = useState('');
 const [takeProfitPrice, setTakeProfitPrice] = useState('');
@@ -53,42 +68,162 @@ const [pendingOrders, setPendingOrders] = useState([]);
 const [marketDay] = useState(getMarketDay());
 const [periodInfo] = useState(getMarketPeriodInfo());
 
-  // Cargar datos del usuario desde localStorage
-  const [userData, setUserData] = useState(() => {
-    const stored = localStorage.getItem(`finmarket_userdata_${currentUser?.id}`);
-    if (stored) {
-      return JSON.parse(stored);
-    }
-    return {
-      balance: currentUser?.balance || 50000,
-      portfolio: [],
-      transactions: []
-    };
-  });
+  // Estado del usuario (balance se carga desde currentUser, portfolio y transactions desde Supabase)
+const [portfolio, setPortfolio] = useState([]);
+const [transactions, setTransactions] = useState([]);
+const [loadingData, setLoadingData] = useState(true);
 
-  // Guardar datos cuando cambien
-  useEffect(() => {
-    if (currentUser) {
-      localStorage.setItem(`finmarket_userdata_${currentUser.id}`, JSON.stringify(userData));
+// Cargar portfolio y transacciones desde Supabase
+useEffect(() => {
+  const loadUserData = async () => {
+    if (!currentUser) return;
+    
+    setLoadingData(true);
+    
+    // Cargar portfolio
+    const { data: portfolioData } = await supabase
+      .from('portfolios')
+      .select(`
+        *,
+        assets (symbol, name, current_price)
+      `)
+      .eq('user_id', currentUser.id);
+    
+    if (portfolioData) {
+      const formattedPortfolio = portfolioData.map(item => ({
+        symbol: item.assets.symbol,
+        name: item.assets.name,
+        shares: item.quantity,
+        avgPrice: item.average_buy_price,
+        currentPrice: item.assets.current_price,
+        value: item.quantity * item.assets.current_price
+      }));
+      setPortfolio(formattedPortfolio);
     }
-  }, [userData, currentUser]);
+    
+    // Cargar transacciones
+    const { data: transData } = await supabase
+      .from('transactions')
+      .select(`
+        *,
+        assets (symbol, name)
+      `)
+      .eq('user_id', currentUser.id)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    
+    if (transData) {
+      const formattedTransactions = transData.map(t => ({
+        type: t.type,
+        symbol: t.assets.symbol,
+        shares: t.quantity,
+        price: t.price,
+        date: new Date(t.created_at).toLocaleDateString('es-ES'),
+        time: new Date(t.created_at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+      }));
+      setTransactions(formattedTransactions);
+    }
+    
+    setLoadingData(false);
+  };
+  
+  loadUserData();
+}, [currentUser]);
 
-  // Cargar eventos de mercado recientes
-  useEffect(() => {
-    const events = JSON.parse(localStorage.getItem('finmarket_market_events') || '[]');
-    const oneDayAgo = Date.now() - (24 * 60 * 60 * 1000);
-    const recent = events.filter(event => 
-      new Date(event.timestamp).getTime() > oneDayAgo
-    ).slice(0, 3);
-    setRecentMarketEvents(recent);
-  }, [activeTab]);
+// Objeto userData para compatibilidad con el código existente
+const userData = {
+  balance: currentUser?.balance || 50000,
+  portfolio: portfolio,
+  transactions: transactions
+};
+
+// Función para actualizar userData (mantener compatibilidad)
+const setUserData = async (newData) => {
+  // Actualizar balance si cambió
+  if (newData.balance !== currentUser.balance) {
+    await supabase
+      .from('users')
+      .update({ balance: newData.balance })
+      .eq('id', currentUser.id);
+  }
+  
+  // Recargar datos
+  const loadUserData = async () => {
+    const { data: portfolioData } = await supabase
+      .from('portfolios')
+      .select(`*, assets (symbol, name, current_price)`)
+      .eq('user_id', currentUser.id);
+    
+    if (portfolioData) {
+      const formattedPortfolio = portfolioData.map(item => ({
+        symbol: item.assets.symbol,
+        name: item.assets.name,
+        shares: item.quantity,
+        avgPrice: item.average_buy_price,
+        currentPrice: item.assets.current_price,
+        value: item.quantity * item.assets.current_price
+      }));
+      setPortfolio(formattedPortfolio);
+    }
+    
+    const { data: transData } = await supabase
+      .from('transactions')
+      .select(`*, assets (symbol, name)`)
+      .eq('user_id', currentUser.id)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    
+    if (transData) {
+      const formattedTransactions = transData.map(t => ({
+        type: t.type,
+        symbol: t.assets.symbol,
+        shares: t.quantity,
+        price: t.price,
+        date: new Date(t.created_at).toLocaleDateString('es-ES'),
+        time: new Date(t.created_at).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+      }));
+      setTransactions(formattedTransactions);
+    }
+  };
+  
+  await loadUserData();
+};
+
+  // Cargar eventos de mercado recientes desde Supabase
+useEffect(() => {
+  const loadMarketEvents = async () => {
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    
+    const { data } = await supabase
+      .from('market_events')
+      .select('*')
+      .gte('created_at', oneDayAgo)
+      .order('created_at', { ascending: false })
+      .limit(3);
+    
+    if (data) {
+      setRecentMarketEvents(data.map(e => ({
+        name: e.name,
+        description: e.description,
+        impact: e.impact_percentage,
+        timestamp: e.created_at
+      })));
+    }
+  };
+  
+  loadMarketEvents();
+}, [activeTab]);
 
   // Cargar órdenes pendientes al montar
-  useEffect(() => {
+useEffect(() => {
+  const loadOrders = async () => {
     if (currentUser) {
-      setPendingOrders(getOrders(currentUser.id, 'pending'));
+      const orders = await getOrders(currentUser.id, 'pending');
+      setPendingOrders(orders);
     }
-  }, [currentUser, userData]);
+  };
+  loadOrders();
+}, [currentUser, userData]);
 
   // Declarar allAssets
   const [allAssets, setAllAssets] = useState([]);
@@ -201,7 +336,7 @@ const getBaseTotal = () => {
   return price * parseFloat(quantity);
 };
 
-  const handleTransaction = () => {
+  const handleTransaction = async () => {
   const total = calculateTotal();
   const qty = parseFloat(quantity);
   
@@ -212,7 +347,7 @@ const getBaseTotal = () => {
 
   if (modalType === 'buy') {
     // COMPRA
-    if (total > userData.balance) {
+    if (total > currentUser.balance) {
       alert('Saldo insuficiente');
       return;
     }
@@ -236,120 +371,211 @@ const getBaseTotal = () => {
       }
     }
 
-    const newBalance = userData.balance - total;
-    const existingAsset = userData.portfolio.find(p => p.symbol === selectedAsset.symbol);
-    let newPortfolio;
+    try {
+      // 1. Obtener asset_id
+      const { data: assetData } = await supabase
+        .from('assets')
+        .select('id')
+        .eq('symbol', selectedAsset.symbol)
+        .single();
+      
+      if (!assetData) {
+        alert('Error: Activo no encontrado');
+        return;
+      }
 
-    if (existingAsset) {
-      const totalShares = existingAsset.shares + qty;
-      const newAvgPrice = ((existingAsset.avgPrice * existingAsset.shares) + (selectedAsset.price * qty)) / totalShares;
-      newPortfolio = userData.portfolio.map(p => 
-        p.symbol === selectedAsset.symbol
-          ? {
-              ...p,
-              shares: totalShares,
-              avgPrice: newAvgPrice,
-              currentPrice: selectedAsset.price,
-              value: totalShares * selectedAsset.price
-            }
-          : p
-      );
-    } else {
-      newPortfolio = [...userData.portfolio, {
-        symbol: selectedAsset.symbol,
-        name: selectedAsset.name,
-        shares: qty,
-        avgPrice: selectedAsset.price,
-        currentPrice: selectedAsset.price,
-        value: total
-      }];
+      // 2. Actualizar balance del usuario
+      const newBalance = currentUser.balance - total;
+      
+      const { error: balanceError } = await supabase
+        .from('users')
+        .update({ balance: newBalance })
+        .eq('id', currentUser.id);
+      
+      if (balanceError) throw balanceError;
+
+      // 3. Crear transacción
+      const { error: transactionError } = await supabase
+        .from('transactions')
+        .insert([{
+          user_id: currentUser.id,
+          asset_id: assetData.id,
+          type: 'buy',
+          quantity: qty,
+          price: selectedAsset.price,
+          total: total,
+          balance_after: newBalance
+        }]);
+      
+      if (transactionError) throw transactionError;
+
+      // 4. Actualizar o crear en portfolio
+      const { data: existingPortfolio } = await supabase
+        .from('portfolios')
+        .select('*')
+        .eq('user_id', currentUser.id)
+        .eq('asset_id', assetData.id)
+        .single();
+      
+      if (existingPortfolio) {
+        // Ya existe, actualizar
+        const newQuantity = existingPortfolio.quantity + qty;
+        const newAvgPrice = (
+          (existingPortfolio.quantity * existingPortfolio.average_buy_price) +
+          (qty * selectedAsset.price)
+        ) / newQuantity;
+        
+        const { error: updateError } = await supabase
+          .from('portfolios')
+          .update({
+            quantity: newQuantity,
+            average_buy_price: newAvgPrice,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', existingPortfolio.id);
+        
+        if (updateError) throw updateError;
+      } else {
+        // No existe, crear nuevo
+        const { error: insertError } = await supabase
+          .from('portfolios')
+          .insert([{
+            user_id: currentUser.id,
+            asset_id: assetData.id,
+            quantity: qty,
+            average_buy_price: selectedAsset.price
+          }]);
+        
+        if (insertError) throw insertError;
+      }
+
+      // 5. Crear órdenes stop-loss y take-profit si están activadas
+      if (enableStopLoss) {
+        await createOrder(currentUser.id, selectedAsset.symbol, 'stop-loss', parseFloat(stopLossPrice), qty);
+      }
+      
+      if (enableTakeProfit) {
+        await createOrder(currentUser.id, selectedAsset.symbol, 'take-profit', parseFloat(takeProfitPrice), qty);
+      }
+
+      // 6. Actualizar currentUser en contexto
+      currentUser.balance = newBalance;
+
+      // 7. Recargar datos
+      await setUserData({ balance: newBalance });
+      
+      // 8. Mostrar éxito y cerrar
+      setShowSuccess(true);
+      setTimeout(() => {
+        setShowSuccess(false);
+        closeModal();
+      }, 1500);
+
+    } catch (error) {
+      console.error('Error en compra:', error);
+      alert('Error al realizar la compra: ' + error.message);
     }
-
-    const newTransaction = {
-      type: 'buy',
-      symbol: selectedAsset.symbol,
-      shares: qty,
-      price: selectedAsset.price,
-      date: new Date().toISOString().split('T')[0],
-      time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
-    };
-
-    setUserData({
-      balance: newBalance,
-      portfolio: newPortfolio,
-      transactions: [newTransaction, ...userData.transactions]
-    });
-
-    // Crear órdenes si están activadas
-    if (enableStopLoss && stopLossPrice) {
-      createOrder(currentUser.id, selectedAsset.symbol, 'stop-loss', parseFloat(stopLossPrice), qty);
-    }
-    
-    if (enableTakeProfit && takeProfitPrice) {
-      createOrder(currentUser.id, selectedAsset.symbol, 'take-profit', parseFloat(takeProfitPrice), qty);
-    }
-    
-    // Actualizar lista de órdenes
-    setPendingOrders(getOrders(currentUser.id, 'pending'));
 
   } else {
-    // VENTA (sin cambios)
-    const portfolioAsset = userData.portfolio.find(p => p.symbol === selectedAsset.symbol);
+    // VENTA
+    const portfolioItem = portfolio.find(p => p.symbol === selectedAsset.symbol);
     
-    if (!portfolioAsset) {
-      alert('No tienes este activo en tu cartera');
+    if (!portfolioItem || portfolioItem.shares < qty) {
+      alert('No tienes suficientes acciones');
       return;
     }
 
-    if (qty > portfolioAsset.shares) {
-      alert(`Solo tienes ${portfolioAsset.shares} unidades disponibles`);
-      return;
+    try {
+      // 1. Obtener asset_id
+      const { data: assetData } = await supabase
+        .from('assets')
+        .select('id')
+        .eq('symbol', selectedAsset.symbol)
+        .single();
+      
+      if (!assetData) {
+        alert('Error: Activo no encontrado');
+        return;
+      }
+
+      // 2. Calcular valores
+      const saleTotal = qty * selectedAsset.currentPrice;
+      const commission = settings.commissionEnabled ? saleTotal * (settings.commissionRate / 100) : 0;
+      const netTotal = saleTotal - commission;
+      const newBalance = currentUser.balance + netTotal;
+
+      // 3. Actualizar balance del usuario
+      const { error: balanceError } = await supabase
+        .from('users')
+        .update({ balance: newBalance })
+        .eq('id', currentUser.id);
+      
+      if (balanceError) throw balanceError;
+
+      // 4. Crear transacción
+      const { error: transactionError } = await supabase
+        .from('transactions')
+        .insert([{
+          user_id: currentUser.id,
+          asset_id: assetData.id,
+          type: 'sell',
+          quantity: qty,
+          price: selectedAsset.currentPrice,
+          total: netTotal,
+          balance_after: newBalance
+        }]);
+      
+      if (transactionError) throw transactionError;
+
+      // 5. Actualizar portfolio
+      const { data: portfolioData } = await supabase
+        .from('portfolios')
+        .select('*')
+        .eq('user_id', currentUser.id)
+        .eq('asset_id', assetData.id)
+        .single();
+      
+      if (portfolioData) {
+        if (qty === portfolioData.quantity) {
+          // Vender todo - eliminar del portfolio
+          const { error: deleteError } = await supabase
+            .from('portfolios')
+            .delete()
+            .eq('id', portfolioData.id);
+          
+          if (deleteError) throw deleteError;
+        } else {
+          // Venta parcial - actualizar cantidad
+          const { error: updateError } = await supabase
+            .from('portfolios')
+            .update({
+              quantity: portfolioData.quantity - qty,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', portfolioData.id);
+          
+          if (updateError) throw updateError;
+        }
+      }
+
+      // 6. Actualizar currentUser en contexto
+      currentUser.balance = newBalance;
+
+      // 7. Recargar datos
+      await setUserData({ balance: newBalance });
+
+      // 8. Mostrar éxito y cerrar
+      setShowSuccess(true);
+      setTimeout(() => {
+        setShowSuccess(false);
+        closeModal();
+      }, 1500);
+
+    } catch (error) {
+      console.error('Error en venta:', error);
+      alert('Error al realizar la venta: ' + error.message);
     }
-
-    const currentPrice = selectedAsset.currentPrice;
-    const newBalance = userData.balance + total;
-    let newPortfolio;
-
-    if (qty === portfolioAsset.shares) {
-      newPortfolio = userData.portfolio.filter(p => p.symbol !== selectedAsset.symbol);
-    } else {
-      newPortfolio = userData.portfolio.map(p =>
-        p.symbol === selectedAsset.symbol
-          ? {
-              ...p,
-              shares: p.shares - qty,
-              value: (p.shares - qty) * currentPrice
-            }
-          : p
-      );
-    }
-
-    const newTransaction = {
-      type: 'sell',
-      symbol: selectedAsset.symbol,
-      shares: qty,
-      price: currentPrice,
-      date: new Date().toISOString().split('T')[0],
-      time: new Date().toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
-    };
-
-    setUserData({
-      balance: newBalance,
-      portfolio: newPortfolio,
-      transactions: [newTransaction, ...userData.transactions]
-    });
   }
-
-  setShowSuccess(true);
-  setTimeout(() => {
-    setShowSuccess(false);
-    closeModal();
-    // Reset órdenes
-    setEnableStopLoss(false);
-    setEnableTakeProfit(false);
-    setStopLossPrice('');
-    setTakeProfitPrice('');
-  }, 2000);
 };
 
   const handleLogout = () => {
