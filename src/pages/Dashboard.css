@@ -986,3 +986,74 @@
   font-size: 1.1rem;
   font-weight: 700;
 }
+
+/* Animacion de rotacion para iconos de actualizacion */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+/* Indicador de precio actualizado - efecto flash */
+@keyframes priceFlash {
+  0% {
+    background-color: transparent;
+  }
+  50% {
+    background-color: rgba(16, 185, 129, 0.2);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+.price-updated {
+  animation: priceFlash 0.5s ease;
+}
+
+/* Badge de conexion en tiempo real */
+.realtime-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.realtime-badge.connected {
+  background: #d1fae5;
+  color: #059669;
+}
+
+.realtime-badge.disconnected {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.realtime-badge.connecting {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+/* Pulso para indicador de conexion activa */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.pulse {
+  animation: pulse 2s ease-in-out infinite;
+}

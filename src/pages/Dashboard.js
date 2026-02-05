@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { getAllAssets, getAssetPrice } from '../utils/assetService';
+import { getAssetPrice } from '../utils/assetService';
 import { useAuth } from '../context/AuthContext';
+import { useRealTimePrices } from '../hooks/useRealTimePrices';
 import './Dashboard.css';
 import { 
   TrendingUp, 
@@ -19,6 +20,10 @@ import {
   Shield,
   BarChart2,
   Book,
+  RefreshCw,
+  Wifi,
+  WifiOff,
+  Clock,
 } from 'lucide-react';
 import PriceChart from '../components/PriceChart';
 import { createOrder, getOrders, checkAndExecuteOrders, validateOrder, deleteOrder, cancelOrder } from '../utils/orderManager';
@@ -225,21 +230,22 @@ useEffect(() => {
   loadOrders();
 }, [currentUser, userData]);
 
-  // Declarar allAssets
-  const [allAssets, setAllAssets] = useState([]);
-const [loadingAssets, setLoadingAssets] = useState(true);
-
-// Cargar activos desde Supabase al montar el componente
-useEffect(() => {
-  const loadAssets = async () => {
-    setLoadingAssets(true);
-    const assets = await getAllAssets();
-    setAllAssets(assets);
-    setLoadingAssets(false);
-  };
-  
-  loadAssets();
-}, []);
+  // Hook de precios en tiempo real - actualiza cada 30 segundos
+  const {
+    assets: allAssets,
+    loading: loadingAssets,
+    lastUpdate,
+    isUpdating,
+    connectionStatus,
+    forceRefresh
+  } = useRealTimePrices({
+    refreshInterval: 30000, // Actualizar cada 30 segundos
+    enableApiUpdates: true,
+    enableRealtimeSync: true,
+    onPriceUpdate: useCallback((updatedAssets) => {
+      console.log('Precios actualizados:', updatedAssets.length, 'activos');
+    }, [])
+  });
 
  // Verificar órdenes pendientes cuando cambien los precios
   useEffect(() => {
@@ -669,6 +675,58 @@ return (
 
 
         <div className="header-right">
+          {/* Indicador de estado de precios en tiempo real */}
+          {(() => {
+            const isConnected = connectionStatus === 'connected' || connectionStatus === 'SUBSCRIBED';
+            const isConnecting = connectionStatus === 'connecting' || connectionStatus === 'CONNECTING' || connectionStatus === 'CHANNEL_ERROR';
+
+            return (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.75rem',
+                padding: '0.5rem 1rem',
+                background: isConnected ? '#d1fae5' : isConnecting ? '#fef3c7' : '#fee2e2',
+                borderRadius: '8px',
+                marginRight: '0.5rem',
+                fontSize: '0.8rem'
+              }}>
+                {isConnected ? (
+                  <Wifi size={16} style={{ color: '#059669' }} />
+                ) : isConnecting ? (
+                  <RefreshCw size={16} style={{ color: '#d97706', animation: 'spin 1s linear infinite' }} />
+                ) : (
+                  <WifiOff size={16} style={{ color: '#dc2626' }} />
+                )}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                  <span style={{
+                    fontWeight: 600,
+                    color: isConnected ? '#059669' : isConnecting ? '#d97706' : '#dc2626'
+                  }}>
+                    {isConnected ? 'En vivo' : isConnecting ? 'Conectando...' : 'Desconectado'}
+                  </span>
+                  {lastUpdate && (
+                    <span style={{ fontSize: '0.7rem', color: '#6b7280' }}>
+                      <Clock size={10} style={{ display: 'inline', marginRight: '2px' }} />
+                      {lastUpdate.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </span>
+                  )}
+                </div>
+                {isUpdating && (
+                  <RefreshCw size={14} style={{ color: '#6b7280', animation: 'spin 1s linear infinite' }} />
+                )}
+              </div>
+            );
+          })()}
+
+          <button
+            className="icon-btn"
+            onClick={forceRefresh}
+            title="Actualizar precios manualmente"
+            style={{ position: 'relative' }}
+          >
+            <RefreshCw size={20} className={isUpdating ? 'spinning' : ''} />
+          </button>
           <button className="icon-btn">
             <Bell size={20} />
           </button>
