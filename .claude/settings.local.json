@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(npm start)",
+      "Bash(timeout:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfeat: Add real-time price updates system\n\n- Add useRealTimePrices hook for automatic price updates every 30 seconds\n- Integrate Supabase Realtime for instant sync when teacher changes prices\n- Add connection status indicator in Dashboard header \\(En vivo/Conectando/Desconectado\\)\n- Add last update timestamp display\n- Add manual refresh button\n- Add CSS animations for loading states\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git push:*)"
+    ]
+  }
+}

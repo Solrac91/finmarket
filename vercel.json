@@ -1,4 +1,8 @@
 {
-  "buildCommand": "CI='' react-scripts build",
-  "outputDirectory": "build"
+  "crons": [
+    {
+      "path": "/api/update-prices",
+      "schedule": "*/15 * * * *"
+    }
+  ]
 }
