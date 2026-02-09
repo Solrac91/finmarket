@@ -1,4 +1,3 @@
-@"
 {
   "compilerOptions": {
     "baseUrl": "src",
@@ -8,4 +7,3 @@
   },
   "include": ["src"]
 }
-"@ | Out-File -FilePath ".\jsconfig.json" -Encoding utf8
