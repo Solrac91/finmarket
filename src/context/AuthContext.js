@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 
 const AuthContext = createContext();
@@ -10,6 +10,7 @@ export function useAuth() {
 export function AuthProvider({ children }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const isRegistering = useRef(false);
 
   useEffect(() => {
     // Verificar sesión actual al cargar
@@ -18,15 +19,19 @@ export function AuthProvider({ children }) {
     // Escuchar cambios de autenticación
     const { data: authListener } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        // No interferir durante el registro
+        if (isRegistering.current) return;
+
         if (session?.user) {
-          // Usuario autenticado, cargar sus datos completos
           const { data: userData } = await supabase
             .from('users')
             .select('*')
             .eq('id', session.user.id)
             .single();
           
-          setCurrentUser(userData);
+          if (userData) {
+            setCurrentUser(userData);
+          }
         } else {
           setCurrentUser(null);
         }
@@ -44,14 +49,15 @@ export function AuthProvider({ children }) {
       const { data: { session } } = await supabase.auth.getSession();
       
       if (session?.user) {
-        // Cargar datos completos del usuario desde la tabla users
         const { data: userData } = await supabase
           .from('users')
           .select('*')
           .eq('id', session.user.id)
           .single();
         
-        setCurrentUser(userData);
+        if (userData) {
+          setCurrentUser(userData);
+        }
       }
       setLoading(false);
     } catch (error) {
@@ -62,6 +68,9 @@ export function AuthProvider({ children }) {
 
   const register = async (name, email, password, role = 'student') => {
     try {
+      // Bloquear el listener para que no interfiera
+      isRegistering.current = true;
+
       // 1. Crear usuario en Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: email,
@@ -89,9 +98,14 @@ export function AuthProvider({ children }) {
         if (userError) throw userError;
 
         setCurrentUser(userData);
+        
+        // Desbloquear el listener
+        isRegistering.current = false;
+        
         return { success: true, user: userData };
       }
     } catch (error) {
+      isRegistering.current = false;
       console.error('Error en registro:', error);
       return { success: false, error: error.message };
     }
@@ -99,7 +113,6 @@ export function AuthProvider({ children }) {
 
   const login = async (email, password) => {
     try {
-      // 1. Autenticar con Supabase Auth
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: email,
         password: password,
@@ -107,7 +120,6 @@ export function AuthProvider({ children }) {
 
       if (authError) throw authError;
 
-      // 2. Cargar datos completos del usuario
       const { data: userData, error: userError } = await supabase
         .from('users')
         .select('*')
