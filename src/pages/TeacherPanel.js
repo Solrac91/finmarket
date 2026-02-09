@@ -3,7 +3,6 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { updateAssetPrice, publishNews as publishNewsUtil, getNews, deleteNews, getRelativeTime, getAssetPrice, getPriceHistory, clearPriceHistory, triggerMarketEvent } from '../utils/marketData';
 import { supabase } from '../supabaseClient';
-import { updateAllRealPrices } from '../utils/priceAPI';
 import './TeacherPanel.css';
 import { 
   getMarketDay, 
@@ -90,7 +89,7 @@ useEffect(() => {
   };
   loadMarketDay();
 }, []);
-const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
+
 const [updateProgress, setUpdateProgress] = useState({ current: 0, total: 0, symbol: '' });
 
   useEffect(() => {

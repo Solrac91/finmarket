@@ -19,7 +19,6 @@ export default function Welcome() {
             <a href="#features" className="nav-link">Características</a>
             <a href="#how-it-works" className="nav-link">Cómo Funciona</a>
             <a href="#about" className="nav-link">Acerca De</a>
-            <a href="#features" className="btn-demo">Ver Demo</a>
             <Link to="/login" className="btn-start">Empezar</Link>
           </div>
         </div>
@@ -36,7 +35,6 @@ export default function Welcome() {
           </p>
           <div className="hero-buttons">
             <Link to="/login" className="btn-primary">Crear Cuenta Gratis</Link>
-            <a href="#how-it-works" className="btn-secondary">Ver Video Demo →</a>
           </div>
         </div>
       </section>
