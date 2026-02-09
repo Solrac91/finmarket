@@ -1,0 +1,11 @@
+@"
+{
+  "compilerOptions": {
+    "baseUrl": "src",
+    "paths": {
+      "@/*": ["./*"]
+    }
+  },
+  "include": ["src"]
+}
+"@ | Out-File -FilePath ".\jsconfig.json" -Encoding utf8
