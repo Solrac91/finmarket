@@ -1,6 +1,6 @@
 // hooks/useRealTimePrices.js
 import { useState, useEffect, useCallback } from 'react';
-import { supabase } from '@/utils/supabaseClient';
+import { supabase } from '../supabaseClient';
 
 export function useRealTimePrices() {
   const [prices, setPrices] = useState({});
