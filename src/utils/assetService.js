@@ -1,6 +1,5 @@
 // src/utils/assetService.js
 import { supabase } from '../supabaseClient';
-import { getRealTimePrice } from './priceAPI';
 
 // Obtener todos los activos desde Supabase
 export const getAllAssets = async () => {
