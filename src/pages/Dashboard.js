@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { getAssetPrice } from '../utils/assetService';
 import { useAuth } from '../context/AuthContext';
-import { useRealTimePrices } from '@/hooks/useRealTimePrices';
+import { useRealTimePrices } from '../hooks/useRealTimePrices';
 import './Dashboard.css';
 import { 
   TrendingUp, 
