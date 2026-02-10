@@ -183,40 +183,6 @@ const updateSettings = async (newSettings) => {
   }
 };
 
-const handleUpdateRealPrices = async () => {
-  if (!window.confirm('¿Actualizar todos los precios en modo AUTO con valores reales del mercado?')) {
-    return;
-  }
-
-  setIsUpdatingPrices(true);
-  setUpdateProgress({ current: 0, total: 0, symbol: 'Iniciando...' });
-
-  try {
-    const result = await updateAllRealPrices((progress) => {
-      setUpdateProgress(progress);
-    });
-
-    if (result.success) {
-      alert(`✅ Actualización completada!\n\n` +
-            `Actualizados: ${result.updated}\n` +
-            `Errores: ${result.errors}\n` +
-            `Total: ${result.total}`);
-      
-      // Recargar datos
-      setAllAssets(getAllAssets());
-      setPriceHistory(getPriceHistory());
-    } else {
-      alert(`❌ Error en la actualización: ${result.error}`);
-    }
-  } catch (error) {
-    console.error('Error updating prices:', error);
-    alert(`❌ Error: ${error.message}`);
-  } finally {
-    setIsUpdatingPrices(false);
-    setUpdateProgress({ current: 0, total: 0, symbol: '' });
-  }
-};
-
   const handleLogout = () => {
     logout();
     navigate('/');
@@ -786,56 +752,6 @@ return (
     Obtiene los precios actuales de las APIs para todos los activos en modo AUTO
   </p>
   
-  {isUpdatingPrices ? (
-    <div style={{ 
-      background: 'rgba(255,255,255,0.2)', 
-      padding: '1rem', 
-      borderRadius: '8px',
-      textAlign: 'center'
-    }}>
-      <div style={{ marginBottom: '0.5rem', fontSize: '1.1rem', fontWeight: 'bold' }}>
-        Actualizando precios... {updateProgress.current}/{updateProgress.total}
-      </div>
-      <div style={{ opacity: 0.9 }}>
-        {updateProgress.symbol}
-      </div>
-      <div style={{
-        width: '100%',
-        height: '8px',
-        background: 'rgba(255,255,255,0.3)',
-        borderRadius: '4px',
-        marginTop: '1rem',
-        overflow: 'hidden'
-      }}>
-        <div style={{
-          width: `${(updateProgress.current / updateProgress.total) * 100}%`,
-          height: '100%',
-          background: 'white',
-          transition: 'width 0.3s ease'
-        }} />
-      </div>
-    </div>
-  ) : (
-    <button
-      onClick={handleUpdateRealPrices}
-      style={{
-        width: '100%',
-        padding: '1rem',
-        background: 'white',
-        color: '#667eea',
-        border: 'none',
-        borderRadius: '8px',
-        fontSize: '1.1rem',
-        fontWeight: 'bold',
-        cursor: 'pointer',
-        transition: 'transform 0.2s',
-      }}
-      onMouseEnter={(e) => e.target.style.transform = 'scale(1.02)'}
-      onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
-    >
-      🔄 Actualizar Precios Reales Ahora
-    </button>
-  )}
 </div>
               <div className="events-grid">
                 <div className="event-card crisis">

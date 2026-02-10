@@ -1,3 +1,4 @@
+import { getAssetPrice } from './marketData';
 // src/utils/assetService.js
 import { supabase } from '../supabaseClient';
 
@@ -19,7 +20,7 @@ export const getAllAssets = async () => {
 
         // Si está en modo AUTO, obtener precio real de la API
         if (asset.price_mode === 'auto') {
-          const realPrice = await getRealTimePrice(asset.symbol, asset.category);
+          const realPrice = await getAssetPrice(asset.symbol, asset.category);
           
           if (realPrice !== null) {
             currentPrice = realPrice;
@@ -67,7 +68,7 @@ export const getAssetPrice = async (symbol) => {
 
     // Si está en modo AUTO, obtener precio real
     if (data.price_mode === 'auto') {
-      const realPrice = await getRealTimePrice(symbol, data.category);
+      const realPrice = await getAssetPrice(symbol, data.category);
       if (realPrice !== null) {
         price = realPrice;
       }
@@ -97,7 +98,7 @@ export const getAssetsByCategory = async (category) => {
         let currentPrice = parseFloat(asset.current_price);
 
         if (asset.price_mode === 'auto') {
-          const realPrice = await getRealTimePrice(asset.symbol, asset.category);
+          const realPrice = await getAssetPrice(asset.symbol, asset.category);
           
           if (realPrice !== null) {
             currentPrice = realPrice;
