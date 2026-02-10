@@ -1,4 +1,3 @@
-import { getAssetPrice } from './marketData';
 // src/utils/assetService.js
 import { supabase } from '../supabaseClient';
 
